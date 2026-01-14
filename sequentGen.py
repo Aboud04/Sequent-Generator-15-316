@@ -78,7 +78,7 @@ class LogicParser:
         self.pos = 0
 
     def tokenize(self, text):
-        text = text.replace("(", " ( ").replace(")", " ) ")
+        text = text.replace("(", " ( ").replace(")", " ) ").replace("~", " ~ ")
         text = re.sub(r"\bimplies\b", "->", text, flags=re.IGNORECASE)
         text = re.sub(r"\band\b", "&", text, flags=re.IGNORECASE)
         text = re.sub(r"\bor\b", "|", text, flags=re.IGNORECASE)
