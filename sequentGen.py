@@ -144,8 +144,12 @@ class Sequent:
         return f"{l} ⊢ {r}"
 
     def to_latex(self):
-        l = ", ".join(f.to_latex() for f in self.lhs)
-        r = ", ".join(f.to_latex() for f in self.rhs)
+        # Filter out dots (which mean nothing and shouldn't appear)
+        lhs_filtered = [f for f in self.lhs if not (isinstance(f, Atom) and f.name == ".")]
+        rhs_filtered = [f for f in self.rhs if not (isinstance(f, Atom) and f.name == ".")]
+        
+        l = ", ".join(f.to_latex() for f in lhs_filtered)
+        r = ", ".join(f.to_latex() for f in rhs_filtered)
         return f"{l if l else '\\cdot'} \\vdash {r if r else '\\cdot'}"
 
 
@@ -382,6 +386,9 @@ class SequentProverApp:
             parts = text.split("entails")
         else:
             parts = ["", text]
+
+        # Strip dots and other trailing punctuation from parts
+        parts = [p.rstrip('.,;:') for p in parts]
 
         lhs_strs = [s.strip() for s in parts[0].split(",")] if parts[0].strip() else []
         rhs_strs = (
