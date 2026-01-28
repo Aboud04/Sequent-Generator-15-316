@@ -1,0 +1,422 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tcolorbox}
+\usepackage{listings}
+
+% Colors
+\definecolor{codeblue}{RGB}{0,102,204}
+\definecolor{codegray}{RGB}{128,128,128}
+\definecolor{rulecolor}{RGB}{70,130,180}
+
+% Hyperlink setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=codeblue,
+    urlcolor=codeblue
+}
+
+% Header/Footer
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textit{Sequent Calculus Prover}}
+\fancyhead[R]{\textit{CMU 15-316}}
+\fancyfoot[C]{\thepage}
+
+% Section formatting
+\titleformat{\section}{\Large\bfseries\color{rulecolor}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
+
+% Code listing style
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    keywordstyle=\color{codeblue},
+}
+
+% Custom box for tips
+\newtcolorbox{tipbox}{
+    colback=blue!5,
+    colframe=blue!50,
+    title=\textbf{Tip},
+    fonttitle=\bfseries
+}
+
+\begin{document}
+
+% Title
+\begin{center}
+    {\Huge\bfseries Sequent Calculus Prover}\\[0.5em]
+    {\Large How To Guide}\\[1em]
+    {\large CMU 15-316: Software Foundations of Security}\\[0.5em]
+    {\normalsize Version 2.0 --- January 28, 2026}
+\end{center}
+
+\vspace{1em}
+\hrule
+\vspace{1.5em}
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+
+The \textbf{Sequent Calculus Prover} is an interactive proof assistant for constructing proofs in propositional logic, first-order logic, and dynamic logic. Users build proof trees by selecting formulas and applying inference rules step-by-step.
+
+\subsection{Features}
+\begin{itemize}
+    \item Propositional logic connectives: $\land$, $\lor$, $\to$, $\neg$, $\leftrightarrow$, $\top$, $\bot$
+    \item First-order quantifiers: $\forall$, $\exists$
+    \item Dynamic logic: box modality $[\alpha]P$ with assignments, tests, loops
+    \item Structural rules: weakening, contraction, cut
+    \item Custom user-defined rules with JSON persistence
+    \item \LaTeX{} export for proof documentation
+\end{itemize}
+
+%==============================================================================
+\section{Installation}
+%==============================================================================
+
+\begin{enumerate}
+    \item Ensure Python 3.x is installed with Tkinter (included by default).
+    \item Clone or download the repository.
+    \item Run the application:
+    \begin{lstlisting}
+python sequentGen.py
+    \end{lstlisting}
+\end{enumerate}
+
+No external packages are required.
+
+%==============================================================================
+\section{Input Syntax}
+%==============================================================================
+
+Sequents are entered in the format: \texttt{antecedent |- succedent}
+
+\subsection{Propositional Logic}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Connective} & \textbf{Syntax Options} & \textbf{Example} \\
+\midrule
+And ($\land$) & \texttt{and}, \texttt{\&} & \texttt{p and q} \\
+Or ($\lor$) & \texttt{or}, \texttt{|} & \texttt{p or q} \\
+Not ($\neg$) & \texttt{not}, \texttt{\~{}} & \texttt{not p} \\
+Implies ($\to$) & \texttt{implies}, \texttt{->} & \texttt{p -> q} \\
+Iff ($\leftrightarrow$) & \texttt{iff}, \texttt{<->} & \texttt{p <-> q} \\
+True ($\top$) & \texttt{true}, \texttt{top} & \texttt{|- true} \\
+False ($\bot$) & \texttt{false}, \texttt{bot}, \texttt{bottom} & \texttt{false |- p} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Quantifiers}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Quantifier} & \textbf{Syntax} & \textbf{Example} \\
+\midrule
+Universal ($\forall$) & \texttt{forall x. P} & \texttt{forall x. P(x) |- Q} \\
+Existential ($\exists$) & \texttt{exists x. P} & \texttt{|- exists y. Q(y)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Dynamic Logic}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Construct} & \textbf{Syntax} & \textbf{Example} \\
+\midrule
+Assignment & \texttt{[x := e]P} & \texttt{[x := 5]Q |- R} \\
+Test & \texttt{[?P]Q} & \texttt{[?guard]result |- S} \\
+Skip & \texttt{[skip]P} & \texttt{[skip]Q |- Q} \\
+Sequence & \texttt{[a; b]P} & \texttt{[x:=1; y:=2]P |- Q} \\
+Choice & \texttt{[a $\cup$ b]P} & \texttt{[a U b]P |- Q} \\
+Loop & \texttt{[a*]P} & \texttt{[loop*]P |- Q} \\
+If-Then-Else & \texttt{[if P then a else b]Q} & (conditional program) \\
+While Loop & \texttt{[while P do a]Q} & (iteration) \\
+While w/ Invariant & \texttt{[while\_\{J\} P do a]Q} & (with invariant $J$) \\
+For Loop & \texttt{[for 0 <= i < n do a]Q} & (bounded iteration) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Comparison Operators}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Operator} & \textbf{Syntax} \\
+\midrule
+Equals & \texttt{x = y} \\
+Not Equals & \texttt{x != y} \\
+Less Than & \texttt{x < y} \\
+Less or Equal & \texttt{x <= y} \\
+Greater Than & \texttt{x > y} \\
+Greater or Equal & \texttt{x >= y} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%==============================================================================
+\section{Step-by-Step Workflow}
+%==============================================================================
+
+\begin{enumerate}[label=\textbf{Step \arabic*:}, leftmargin=*]
+    \item \textbf{Enter a Sequent}\\
+    Type your sequent in the input field at the top. Use \texttt{|-} to separate the antecedent (left) from the succedent (right).
+    
+    \textit{Example:} \texttt{p implies q, p |- q}
+    
+    \item \textbf{Click ``Start Proof''}\\
+    The proof tree appears in the left pane, and the current sequent's formulas are displayed in the formula lists on the right.
+    
+    \item \textbf{Select a Formula}\\
+    Click on a formula in either the \textbf{Antecedent (LHS)} or \textbf{Succedent (RHS)} list to select it.
+    
+    \item \textbf{Choose a Tab and Apply a Rule}\\
+    Navigate to the appropriate tab and click the rule button:
+    \begin{itemize}
+        \item \textbf{Propositional} --- $\land$L/R, $\lor$L/R, $\to$L/R, $\neg$L/R, $\leftrightarrow$L/R, $\bot$L/R, $\top$L/R
+        \item \textbf{Quantifiers} --- $\forall$L/R, $\exists$L/R
+        \item \textbf{Dynamic Logic} --- $[:=]$R, $[?]$L/R, $[;]$L/R, $[\text{skip}]$L/R, $[\cup]$R, $[*]$unfold, etc.
+        \item \textbf{Structural} --- Weakening, Contraction, Cut
+        \item \textbf{Custom} --- User-defined rules
+    \end{itemize}
+    
+    \item \textbf{Close Branches}\\
+    Use the \textbf{Identity (Axiom)} button when a formula appears on both sides.
+    Use $\bot$L when $\bot$ is in the antecedent, or $\top$R when $\top$ is in the succedent.
+    
+    \item \textbf{Repeat}\\
+    Continue selecting formulas and applying rules until all branches are closed (marked with $\checkmark$).
+\end{enumerate}
+
+%==============================================================================
+\section{Rule Reference}
+%==============================================================================
+
+\subsection{Propositional Rules}
+
+\begin{center}
+\begin{tabular}{llp{7cm}}
+\toprule
+\textbf{Rule} & \textbf{Type} & \textbf{Description} \\
+\midrule
+$\land$L & Unary & $\Gamma, A \land B \vdash \Delta \Longrightarrow \Gamma, A, B \vdash \Delta$ \\
+$\land$R & Binary & $\Gamma \vdash A \land B, \Delta \Longrightarrow (\Gamma \vdash A, \Delta) \text{ and } (\Gamma \vdash B, \Delta)$ \\
+\midrule
+$\lor$L & Binary & $\Gamma, A \lor B \vdash \Delta \Longrightarrow (\Gamma, A \vdash \Delta) \text{ and } (\Gamma, B \vdash \Delta)$ \\
+$\lor$R & Unary & $\Gamma \vdash A \lor B, \Delta \Longrightarrow \Gamma \vdash A, B, \Delta$ \\
+\midrule
+$\to$L & Binary & $\Gamma, A \to B \vdash \Delta \Longrightarrow (\Gamma \vdash A, \Delta) \text{ and } (\Gamma, B \vdash \Delta)$ \\
+$\to$R & Unary & $\Gamma \vdash A \to B, \Delta \Longrightarrow \Gamma, A \vdash B, \Delta$ \\
+\midrule
+$\neg$L & Unary & $\Gamma, \neg A \vdash \Delta \Longrightarrow \Gamma \vdash A, \Delta$ \\
+$\neg$R & Unary & $\Gamma \vdash \neg A, \Delta \Longrightarrow \Gamma, A \vdash \Delta$ \\
+\midrule
+$\leftrightarrow$L & Binary & $\Gamma, A \leftrightarrow B \vdash \Delta \Longrightarrow (\Gamma, A, B \vdash \Delta) \text{ and } (\Gamma \vdash A, B, \Delta)$ \\
+$\leftrightarrow$R & Binary & $\Gamma \vdash A \leftrightarrow B, \Delta \Longrightarrow (\Gamma, A \vdash B, \Delta) \text{ and } (\Gamma, B \vdash A, \Delta)$ \\
+\midrule
+$\top$L & Unary & $\Gamma, \top \vdash \Delta \Longrightarrow \Gamma \vdash \Delta$ (removes vacuous $\top$) \\
+$\top$R & Closes & $\Gamma \vdash \top, \Delta$ closes (true is always provable) \\
+\midrule
+$\bot$L & Closes & $\Gamma, \bot \vdash \Delta$ closes (false implies anything) \\
+$\bot$R & Unary & $\Gamma \vdash \bot, \Delta \Longrightarrow \Gamma \vdash \Delta$ (removes $\bot$ from succedent) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Quantifier Rules}
+
+\begin{center}
+\begin{tabular}{llp{8cm}}
+\toprule
+\textbf{Rule} & \textbf{Type} & \textbf{Description} \\
+\midrule
+$\forall$L & Unary & Instantiate with user-provided term $t$: adds $P(t)$ to antecedent \\
+$\forall$R & Unary & Uses fresh variable $x'$: replaces $\forall x. P$ with $P(x')$ \\
+$\exists$L & Unary & Uses fresh variable $x'$: replaces $\exists x. P$ with $P(x')$ \\
+$\exists$R & Unary & Instantiate with user-provided term $t$: adds $P(t)$ to succedent \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Dynamic Logic Rules}
+
+\begin{center}
+\begin{tabular}{llp{7cm}}
+\toprule
+\textbf{Rule} & \textbf{Type} & \textbf{Description} \\
+\midrule
+$[:=]$R & Unary & $[x := e]Q \Longrightarrow x' = e \vdash Q[x'/x]$ (fresh $x'$) \\
+\midrule
+$[?]$L & Binary & $[?P]Q$ on left $\Longrightarrow (\vdash P)$ and $(Q \vdash)$ \\
+$[?]$R & Unary & $[?P]Q$ on right $\Longrightarrow P \vdash Q$ \\
+\midrule
+$[;]$L & Unary & $[\alpha;\beta]Q \Longrightarrow [\alpha][\beta]Q$ (on left) \\
+$[;]$R & Unary & $[\alpha;\beta]Q \Longrightarrow [\alpha][\beta]Q$ (on right) \\
+\midrule
+$[\text{skip}]$L & Unary & $[\text{skip}]Q \Longrightarrow Q$ (on left) \\
+$[\text{skip}]$R & Unary & $[\text{skip}]Q \Longrightarrow Q$ (on right) \\
+\midrule
+$[\cup]$R & Binary & $[\alpha \cup \beta]Q \Longrightarrow [\alpha]Q$ and $[\beta]Q$ \\
+\midrule
+$[*]$unfold & Binary & $[\alpha^*]Q \Longrightarrow Q$ (exit) and $[\alpha][\alpha^*]Q$ (iterate) \\
+\midrule
+$[\text{if}]$R & Binary & $[\text{if } P \text{ then } \alpha \text{ else } \beta]Q \Longrightarrow (P, [\alpha]Q)$ and $(\neg P, [\beta]Q)$ \\
+\midrule
+$[\text{while}]$unfold & Binary & Unfolds one iteration of while loop \\
+$[\text{while}]$inv & Ternary & Uses invariant $J$: (1) $\vdash J$, (2) $J \land P \vdash [\alpha]J$, (3) $J \land \neg P \vdash Q$ \\
+\midrule
+$[\text{for}]$R & Unary & Desugars to: $[i := 0; \text{while } (i < n) \text{ do } (\alpha; i := i+1)]Q$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Structural Rules}
+
+\begin{center}
+\begin{tabular}{llp{8cm}}
+\toprule
+\textbf{Rule} & \textbf{Type} & \textbf{Description} \\
+\midrule
+WL & Unary & Weakening Left: Add any formula to the antecedent \\
+WR & Unary & Weakening Right: Add any formula to the succedent \\
+CL & Unary & Contraction Left: Remove duplicate from antecedent \\
+CR & Unary & Contraction Right: Remove duplicate from succedent \\
+Cut & Binary & Introduce lemma $C$: proves $(\vdash C)$ and $(C \vdash)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%==============================================================================
+\section{Custom Rules}
+%==============================================================================
+
+Create your own inference rules via the \textbf{Custom} tab.
+
+\subsection{Creating a Custom Rule}
+
+\begin{enumerate}
+    \item Click \textbf{``+ Add Rule''} in the Custom tab.
+    \item Enter a \textbf{Rule Name} (e.g., ``DoubleNeg'').
+    \item Select the \textbf{Side}: LHS (antecedent) or RHS (succedent).
+    \item Choose the \textbf{Rule Type}:
+    \begin{itemize}
+        \item \textbf{Unary} --- One child branch
+        \item \textbf{Binary} --- Two child branches
+        \item \textbf{Close} --- Closes the branch immediately
+    \end{itemize}
+    \item Use \textbf{placeholders} in formula fields:
+    \begin{center}
+    \begin{tabular}{ll}
+    \toprule
+    \textbf{Placeholder} & \textbf{Meaning} \\
+    \midrule
+    \texttt{LEFT} & Left operand of binary formula \\
+    \texttt{RIGHT} & Right operand of binary formula \\
+    \texttt{INNER} & Inner formula of $\neg$ \\
+    \texttt{FORMULA} & The entire selected formula \\
+    \bottomrule
+    \end{tabular}
+    \end{center}
+    \item Click \textbf{``Save Rule''}.
+\end{enumerate}
+
+\subsection{Example: Double Negation Elimination}
+
+To create a rule that simplifies $\neg\neg P$ to $P$:
+\begin{itemize}
+    \item \textbf{Name:} DoubleNegElim
+    \item \textbf{Side:} RHS
+    \item \textbf{Type:} Unary
+    \item \textbf{Add to RHS:} \texttt{INNER} (extracts the inner $\neg P$, then you'd apply $\neg$R)
+\end{itemize}
+
+Custom rules are automatically saved to \texttt{custom\_rules.json} and persist across sessions.
+
+%==============================================================================
+\section{\LaTeX{} Export}
+%==============================================================================
+
+Click \textbf{``Export \LaTeX{}''} to generate proof tree code using the \texttt{\textbackslash infer} macro format:
+
+\begin{lstlisting}
+\begin{rules}
+\infer[\ms{id}]
+  {p, q \vdash p}
+  {}
+\end{rules}
+\end{lstlisting}
+
+Use with the \texttt{bussproofs} or similar package in your \LaTeX{} documents.
+
+%==============================================================================
+\section{Reference Materials}
+%==============================================================================
+
+The \texttt{Notes To Reference/} folder contains PDF lecture notes from CMU 15-316:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{File} & \textbf{Content} \\
+\midrule
+\texttt{02-prop.pdf} & Propositional logic sequent calculus \\
+\texttt{03-dynamiclogic.pdf} & Dynamic logic and box modality \\
+\texttt{04-semantics.pdf} & Formal semantics \\
+\texttt{05-safety.pdf} & Safety proof techniques \\
+\texttt{06-memsafety.pdf} & Memory safety proofs \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%==============================================================================
+\section{Troubleshooting}
+%==============================================================================
+
+\begin{description}[style=nextline]
+    \item[``Please select a formula''] 
+    Click on a formula in the LHS or RHS list before applying a rule.
+    
+    \item[``Rule already applied to this node''] 
+    Select a leaf node (no children) in the proof tree.
+    
+    \item[``This branch is already closed''] 
+    Move to a different open branch in the tree.
+    
+    \item[Identity rule doesn't work] 
+    Ensure the exact same formula appears on \textit{both} sides of the sequent.
+    
+    \item[Custom rule not appearing] 
+    Check that \texttt{custom\_rules.json} exists and is valid JSON.
+\end{description}
+
+\vspace{2em}
+\hrule
+\vspace{1em}
+\begin{center}
+\textit{Happy Proving!}\\[0.5em]
+\small For issues or contributions, see the project repository.
+\end{center}
+
+\end{document}
