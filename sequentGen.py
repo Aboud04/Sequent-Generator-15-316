@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, font
 import re
+import json
+import os
 
 class Formula:
     def __repr__(self):
@@ -72,17 +74,442 @@ class Implies(BinaryFormula):
         return f"({self.left.to_latex()} \\to {self.right.to_latex()})"
 
 
+class Iff(BinaryFormula):
+    """Bi-implication (logical equivalence): F ↔ G"""
+    def __str__(self):
+        return f"({self.left} ↔ {self.right})"
+
+    def to_latex(self):
+        return f"({self.left.to_latex()} \\leftrightarrow {self.right.to_latex()})"
+
+
+class Top(Formula):
+    """Logical constant for truth (⊤)"""
+    def __str__(self):
+        return "⊤"
+
+    def to_latex(self):
+        return "\\top"
+
+    def __eq__(self, other):
+        return isinstance(other, Top)
+
+
+class Bottom(Formula):
+    """Logical constant for falsity (⊥)"""
+    def __str__(self):
+        return "⊥"
+
+    def to_latex(self):
+        return "\\bot"
+
+    def __eq__(self, other):
+        return isinstance(other, Bottom)
+
+
+# ============================================================================
+# QUANTIFIER FORMULAS
+# ============================================================================
+
+class Forall(Formula):
+    """Universal quantifier: ∀x. P(x)"""
+    def __init__(self, var, inner):
+        self.var = var  # Variable name (string)
+        self.inner = inner  # Formula
+
+    def __str__(self):
+        return f"(∀{self.var}. {self.inner})"
+
+    def to_latex(self):
+        return f"(\\forall {self.var}.\\ {self.inner.to_latex()})"
+
+    def __eq__(self, other):
+        return isinstance(other, Forall) and self.var == other.var and self.inner == other.inner
+
+
+class Exists(Formula):
+    """Existential quantifier: ∃x. P(x)"""
+    def __init__(self, var, inner):
+        self.var = var
+        self.inner = inner
+
+    def __str__(self):
+        return f"(∃{self.var}. {self.inner})"
+
+    def to_latex(self):
+        return f"(\\exists {self.var}.\\ {self.inner.to_latex()})"
+
+    def __eq__(self, other):
+        return isinstance(other, Exists) and self.var == other.var and self.inner == other.inner
+
+
+# ============================================================================
+# DYNAMIC LOGIC - PROGRAM CONSTRUCTS
+# ============================================================================
+
+class Program:
+    """Base class for program constructs in dynamic logic"""
+    def __repr__(self):
+        return str(self)
+
+
+class Assign(Program):
+    """Assignment: x := e"""
+    def __init__(self, var, expr):
+        self.var = var  # Variable name
+        self.expr = expr  # Expression (can be Atom or complex)
+
+    def __str__(self):
+        return f"{self.var} := {self.expr}"
+
+    def to_latex(self):
+        expr_tex = self.expr.to_latex() if hasattr(self.expr, 'to_latex') else str(self.expr)
+        return f"{self.var} := {expr_tex}"
+
+
+class Test(Program):
+    """Test/Guard: ?P"""
+    def __init__(self, formula):
+        self.formula = formula
+
+    def __str__(self):
+        return f"?{self.formula}"
+
+    def to_latex(self):
+        return f"?{self.formula.to_latex()}"
+
+
+class Seq(Program):
+    """Sequential composition: α; β"""
+    def __init__(self, first, second):
+        self.first = first
+        self.second = second
+
+    def __str__(self):
+        return f"({self.first}; {self.second})"
+
+    def to_latex(self):
+        return f"({self.first.to_latex()};\\ {self.second.to_latex()})"
+
+
+class Choice(Program):
+    """Non-deterministic choice: α ∪ β"""
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return f"({self.left} ∪ {self.right})"
+
+    def to_latex(self):
+        return f"({self.left.to_latex()} \\cup {self.right.to_latex()})"
+
+
+class Loop(Program):
+    """Iteration/loop: α*"""
+    def __init__(self, body):
+        self.body = body
+
+    def __str__(self):
+        return f"({self.body})*"
+
+    def to_latex(self):
+        return f"({self.body.to_latex()})^*"
+
+
+class Skip(Program):
+    """Skip/no-op program: skip"""
+    def __str__(self):
+        return "skip"
+
+    def to_latex(self):
+        return "\\mathbf{skip}"
+
+    def __eq__(self, other):
+        return isinstance(other, Skip)
+
+
+class IfProg(Program):
+    """Conditional: if P then α else β"""
+    def __init__(self, guard, then_branch, else_branch):
+        self.guard = guard  # Formula
+        self.then_branch = then_branch  # Program
+        self.else_branch = else_branch  # Program
+
+    def __str__(self):
+        return f"if {self.guard} then {self.then_branch} else {self.else_branch}"
+
+    def to_latex(self):
+        return f"\\text{{if }} {self.guard.to_latex()} \\text{{ then }} {self.then_branch.to_latex()} \\text{{ else }} {self.else_branch.to_latex()}"
+
+
+class WhileProg(Program):
+    """While loop: while P do α (with optional invariant J)
+    Syntax: while P do α  OR  while_J P do α (with invariant J)"""
+    def __init__(self, guard, body, invariant=None):
+        self.guard = guard  # Formula
+        self.body = body  # Program
+        self.invariant = invariant  # Optional loop invariant
+
+    def __str__(self):
+        if self.invariant:
+            return f"while_{{{self.invariant}}} {self.guard} do {self.body}"
+        return f"while {self.guard} do {self.body}"
+
+    def to_latex(self):
+        if self.invariant:
+            return f"\\text{{while}}_{{{self.invariant.to_latex()}}} {self.guard.to_latex()} \\text{{ do }} {self.body.to_latex()}"
+        return f"\\text{{while }} {self.guard.to_latex()} \\text{{ do }} {self.body.to_latex()}"
+
+
+class ForProg(Program):
+    """Bounded for loop: for 0 ≤ i < n do α
+    
+    The loop body α may depend on variables i and n (which must be different),
+    but α may not assign to i or n.
+    
+    Semantically equivalent to: i := 0; while (i < n) { α; i := i + 1 }
+    """
+    def __init__(self, loop_var, bound_var, body):
+        self.loop_var = loop_var  # Loop variable name (e.g., 'i')
+        self.bound_var = bound_var  # Upper bound variable name (e.g., 'n')
+        self.body = body  # Program (loop body)
+
+    def __str__(self):
+        return f"for 0 ≤ {self.loop_var} < {self.bound_var} do {self.body}"
+
+    def to_latex(self):
+        body_tex = self.body.to_latex() if hasattr(self.body, 'to_latex') else str(self.body)
+        return f"\\mathbf{{for}}\\; 0 \\leq {self.loop_var} < {self.bound_var}\\; \\mathbf{{do}}\\; {body_tex}"
+
+    def __eq__(self, other):
+        return (isinstance(other, ForProg) and 
+                self.loop_var == other.loop_var and 
+                self.bound_var == other.bound_var and
+                self.body == other.body)
+
+
+# ============================================================================
+# DYNAMIC LOGIC - MODAL FORMULAS
+# ============================================================================
+
+class Box(Formula):
+    """Box modality: [α]P - after all executions of α, P holds"""
+    def __init__(self, program, postcondition):
+        self.program = program  # Program
+        self.postcondition = postcondition  # Formula
+
+    def __str__(self):
+        return f"[{self.program}]{self.postcondition}"
+
+    def to_latex(self):
+        prog_tex = self.program.to_latex() if hasattr(self.program, 'to_latex') else str(self.program)
+        return f"[{prog_tex}]{self.postcondition.to_latex()}"
+
+    def __eq__(self, other):
+        return isinstance(other, Box) and self.program == other.program and self.postcondition == other.postcondition
+
+
+class Diamond(Formula):
+    """Diamond modality: ⟨α⟩P - there exists an execution of α where P holds"""
+    def __init__(self, program, postcondition):
+        self.program = program
+        self.postcondition = postcondition
+
+    def __str__(self):
+        return f"⟨{self.program}⟩{self.postcondition}"
+
+    def to_latex(self):
+        prog_tex = self.program.to_latex() if hasattr(self.program, 'to_latex') else str(self.program)
+        return f"\\langle {prog_tex} \\rangle {self.postcondition.to_latex()}"
+
+    def __eq__(self, other):
+        return isinstance(other, Diamond) and self.program == other.program and self.postcondition == other.postcondition
+
+
+# ============================================================================
+# ARITHMETIC/EQUALITY FORMULAS (for dynamic logic)
+# ============================================================================
+
+class Equals(Formula):
+    """Equality: e1 = e2"""
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return f"({self.left} = {self.right})"
+
+    def to_latex(self):
+        l = self.left.to_latex() if hasattr(self.left, 'to_latex') else str(self.left)
+        r = self.right.to_latex() if hasattr(self.right, 'to_latex') else str(self.right)
+        return f"({l} = {r})"
+
+    def __eq__(self, other):
+        return isinstance(other, Equals) and self.left == other.left and self.right == other.right
+
+
+class NotEquals(Formula):
+    """Inequality: e1 ≠ e2"""
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return f"({self.left} ≠ {self.right})"
+
+    def to_latex(self):
+        l = self.left.to_latex() if hasattr(self.left, 'to_latex') else str(self.left)
+        r = self.right.to_latex() if hasattr(self.right, 'to_latex') else str(self.right)
+        return f"({l} \\neq {r})"
+
+    def __eq__(self, other):
+        return isinstance(other, NotEquals) and self.left == other.left and self.right == other.right
+
+
+class LessThan(Formula):
+    """Less than: e1 < e2"""
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return f"({self.left} < {self.right})"
+
+    def to_latex(self):
+        l = self.left.to_latex() if hasattr(self.left, 'to_latex') else str(self.left)
+        r = self.right.to_latex() if hasattr(self.right, 'to_latex') else str(self.right)
+        return f"({l} < {r})"
+
+
+class LessEq(Formula):
+    """Less than or equal: e1 ≤ e2"""
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return f"({self.left} ≤ {self.right})"
+
+    def to_latex(self):
+        l = self.left.to_latex() if hasattr(self.left, 'to_latex') else str(self.left)
+        r = self.right.to_latex() if hasattr(self.right, 'to_latex') else str(self.right)
+        return f"({l} \\leq {r})"
+
+
+class GreaterThan(Formula):
+    """Greater than: e1 > e2"""
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return f"({self.left} > {self.right})"
+
+    def to_latex(self):
+        l = self.left.to_latex() if hasattr(self.left, 'to_latex') else str(self.left)
+        r = self.right.to_latex() if hasattr(self.right, 'to_latex') else str(self.right)
+        return f"({l} > {r})"
+
+
+class GreaterEq(Formula):
+    """Greater than or equal: e1 ≥ e2"""
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self):
+        return f"({self.left} ≥ {self.right})"
+
+    def to_latex(self):
+        l = self.left.to_latex() if hasattr(self.left, 'to_latex') else str(self.left)
+        r = self.right.to_latex() if hasattr(self.right, 'to_latex') else str(self.right)
+        return f"({l} \\geq {r})"
+
+
 class LogicParser:
+    """
+    Extended parser supporting:
+    - Propositional logic: and, or, not, implies, iff
+    - Quantifiers: forall x. P, exists x. P
+    - Dynamic logic: [x := e]P, [a;b]P, [if P then a else b]P, [while P do a]P
+    - Comparisons: =, !=, <, <=, >, >=
+    """
     def __init__(self):
         self.tokens = []
         self.pos = 0
+        self.fresh_var_counter = 0
+
+    def get_fresh_var(self, base="x"):
+        """Generate a fresh variable name."""
+        self.fresh_var_counter += 1
+        return f"{base}_{self.fresh_var_counter}"
 
     def tokenize(self, text):
-        text = text.replace("(", " ( ").replace(")", " ) ").replace("~", " ~ ")
+        # Use placeholders for multi-char operators before single-char replacements
+        text = text.replace(":=", " ASSIGN_OP ")
+        text = text.replace("!=", " NOTEQ_OP ")
+        text = text.replace("<=", " LESSEQ_OP ")
+        text = text.replace(">=", " GREATEQ_OP ")
+        text = text.replace("<->", " BICONDITIONAL_OP ")
+        text = text.replace("->", " IMPLIES_OP ")
+        
+        # Handle brackets for box/diamond modality
+        text = text.replace("[", " [ ").replace("]", " ] ")
+        text = text.replace("⟨", " ⟨ ").replace("⟩", " ⟩ ")
+        
+        # Single-char operators (safe now that multi-char are placeholders)
+        text = text.replace("<", " < ").replace(">", " > ")
+        text = text.replace(".", " . ")
+        text = text.replace("(", " ( ").replace(")", " ) ")
+        text = text.replace(";", " ; ")
+        text = text.replace("~", " ~ ")
+        text = text.replace("?", " ? ")
+        text = text.replace("*", " * ")
+        text = text.replace("=", " = ")
+        
+        # Fix double spaces from replacements
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Restore multi-char operators from placeholders
+        text = text.replace("ASSIGN_OP", ":=")
+        text = text.replace("NOTEQ_OP", "!=")
+        text = text.replace("LESSEQ_OP", "<=")
+        text = text.replace("GREATEQ_OP", ">=")
+        text = text.replace("BICONDITIONAL_OP", "<->")
+        text = text.replace("IMPLIES_OP", "->")
+        
+        # Handle keywords (case-insensitive)
+        text = re.sub(r"\biff\b", "<->", text, flags=re.IGNORECASE)
         text = re.sub(r"\bimplies\b", "->", text, flags=re.IGNORECASE)
         text = re.sub(r"\band\b", "&", text, flags=re.IGNORECASE)
         text = re.sub(r"\bor\b", "|", text, flags=re.IGNORECASE)
         text = re.sub(r"\bnot\b", "~", text, flags=re.IGNORECASE)
+        
+        # Handle truth constants
+        text = re.sub(r"\btrue\b", "TOP", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bfalse\b", "BOT", text, flags=re.IGNORECASE)
+        text = re.sub(r"\btop\b", "TOP", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bbot\b", "BOT", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bbottom\b", "BOT", text, flags=re.IGNORECASE)
+        
+        # Quantifier keywords
+        text = re.sub(r"\bforall\b", "FORALL", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bexists\b", "EXISTS", text, flags=re.IGNORECASE)
+        text = re.sub(r"∀", "FORALL", text)
+        text = re.sub(r"∃", "EXISTS", text)
+        
+        # Program keywords
+        text = re.sub(r"\bif\b", "IF", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bthen\b", "THEN", text, flags=re.IGNORECASE)
+        text = re.sub(r"\belse\b", "ELSE", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bwhile\b", "WHILE", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bdo\b", "DO", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bassert\b", "ASSERT", text, flags=re.IGNORECASE)
+        text = re.sub(r"\btest\b", "TEST", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bskip\b", "SKIP", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bfor\b", "FOR", text, flags=re.IGNORECASE)
+        
         return text.split()
 
     def parse(self, text):
@@ -90,7 +517,22 @@ class LogicParser:
         self.pos = 0
         if not self.tokens:
             return None
-        return self.parse_implies()
+        return self.parse_iff()
+
+    def peek(self, offset=0):
+        """Look at a token without consuming it."""
+        idx = self.pos + offset
+        if idx < len(self.tokens):
+            return self.tokens[idx]
+        return None
+
+    def parse_iff(self):
+        left = self.parse_implies()
+        if self.pos < len(self.tokens) and self.tokens[self.pos] == "<->":
+            self.pos += 1
+            right = self.parse_iff()
+            return Iff(left, right)
+        return left
 
     def parse_implies(self):
         left = self.parse_or()
@@ -109,27 +551,269 @@ class LogicParser:
         return left
 
     def parse_and(self):
-        left = self.parse_not()
+        left = self.parse_comparison()
         while self.pos < len(self.tokens) and self.tokens[self.pos] == "&":
             self.pos += 1
-            right = self.parse_not()
+            right = self.parse_comparison()
             left = And(left, right)
+        return left
+
+    def parse_comparison(self):
+        """Parse comparison operators: =, !=, <, <=, >, >="""
+        left = self.parse_not()
+        if self.pos < len(self.tokens):
+            op = self.tokens[self.pos]
+            if op == "=" and self.peek(1) not in [None, ")", "]", ",", "&", "|", "->", "<->"]:
+                # This might be an equality comparison
+                self.pos += 1
+                right = self.parse_not()
+                return Equals(left, right)
+            elif op == "!=":
+                self.pos += 1
+                right = self.parse_not()
+                return NotEquals(left, right)
+            elif op == "<" and self.peek(1) not in ["-"]:  # Not part of <->
+                self.pos += 1
+                right = self.parse_not()
+                return LessThan(left, right)
+            elif op == "<=":
+                self.pos += 1
+                right = self.parse_not()
+                return LessEq(left, right)
+            elif op == ">":
+                self.pos += 1
+                right = self.parse_not()
+                return GreaterThan(left, right)
+            elif op == ">=":
+                self.pos += 1
+                right = self.parse_not()
+                return GreaterEq(left, right)
         return left
 
     def parse_not(self):
         if self.pos < len(self.tokens) and self.tokens[self.pos] == "~":
             self.pos += 1
             return Not(self.parse_not())
+        return self.parse_quantifier()
+
+    def parse_quantifier(self):
+        """Parse universal and existential quantifiers."""
+        if self.pos < len(self.tokens):
+            token = self.tokens[self.pos]
+            if token == "FORALL":
+                self.pos += 1
+                var = self.tokens[self.pos]
+                self.pos += 1
+                # Skip the dot if present
+                if self.pos < len(self.tokens) and self.tokens[self.pos] == ".":
+                    self.pos += 1
+                inner = self.parse_iff()  # Parse the body
+                return Forall(var, inner)
+            elif token == "EXISTS":
+                self.pos += 1
+                var = self.tokens[self.pos]
+                self.pos += 1
+                # Skip the dot if present
+                if self.pos < len(self.tokens) and self.tokens[self.pos] == ".":
+                    self.pos += 1
+                inner = self.parse_iff()
+                return Exists(var, inner)
+        return self.parse_modality()
+
+    def parse_modality(self):
+        """Parse box [α]P and diamond ⟨α⟩P modalities."""
+        if self.pos < len(self.tokens) and self.tokens[self.pos] == "[":
+            self.pos += 1  # consume [
+            program = self.parse_program()
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == "]":
+                self.pos += 1  # consume ]
+            postcondition = self.parse_iff()  # The formula after ]
+            return Box(program, postcondition)
+        elif self.pos < len(self.tokens) and self.tokens[self.pos] == "⟨":
+            self.pos += 1  # consume ⟨
+            program = self.parse_program()
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == "⟩":
+                self.pos += 1  # consume ⟩
+            postcondition = self.parse_iff()
+            return Diamond(program, postcondition)
         return self.parse_atom()
 
+    def parse_program(self):
+        """Parse program constructs for dynamic logic."""
+        return self.parse_program_choice()
+
+    def parse_program_choice(self):
+        """Parse non-deterministic choice: α ∪ β"""
+        left = self.parse_program_seq()
+        while self.pos < len(self.tokens) and self.tokens[self.pos] in ["∪", "U", "++", "CHOICE"]:
+            self.pos += 1
+            right = self.parse_program_seq()
+            left = Choice(left, right)
+        return left
+
+    def parse_program_seq(self):
+        """Parse sequential composition: α; β"""
+        left = self.parse_program_loop()
+        if left is None:
+            return None
+        while self.pos < len(self.tokens) and self.tokens[self.pos] == ";":
+            self.pos += 1
+            right = self.parse_program_loop()
+            if right is None:
+                break
+            left = Seq(left, right)
+        return left
+
+    def parse_program_loop(self):
+        """Parse iteration: α*"""
+        prog = self.parse_program_atom()
+        if prog is None:
+            return None
+        if self.pos < len(self.tokens) and self.tokens[self.pos] == "*":
+            self.pos += 1
+            prog = Loop(prog)
+        return prog
+
+    def parse_program_atom(self):
+        """Parse atomic programs: assignment, test, if, while."""
+        if self.pos >= len(self.tokens):
+            return None
+        
+        token = self.tokens[self.pos]
+        
+        # Stop at closing bracket - we've reached end of program
+        if token == "]" or token == "⟩":
+            return None
+        
+        # Test: ?P
+        if token == "?" or token == "TEST":
+            self.pos += 1
+            # For test, parse a simple formula (not full iff to avoid consuming too much)
+            formula = self.parse_simple_formula_for_program()
+            return Test(formula)
+        
+        # Assert
+        if token == "ASSERT":
+            self.pos += 1
+            formula = self.parse_simple_formula_for_program()
+            return Test(formula)  # Assert is similar to test for our purposes
+        
+        # If-then-else
+        if token == "IF":
+            self.pos += 1
+            guard = self.parse_simple_formula_for_program()
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == "THEN":
+                self.pos += 1
+            then_branch = self.parse_program_atom()
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == "ELSE":
+                self.pos += 1
+            else_branch = self.parse_program_atom()
+            return IfProg(guard, then_branch, else_branch)
+        
+        # While loop (with optional invariant)
+        # Syntax: "while P do α" or "while_{J} P do α" for invariant J
+        if token == "WHILE":
+            self.pos += 1
+            invariant = None
+            # Check for invariant annotation: while_{J} or while_J
+            if self.pos < len(self.tokens) and self.tokens[self.pos].startswith("_"):
+                inv_token = self.tokens[self.pos]
+                # Extract invariant (remove leading underscore and any braces)
+                inv_str = inv_token[1:].strip("{}")
+                invariant = Atom(inv_str)
+                self.pos += 1
+            guard = self.parse_simple_formula_for_program()
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == "DO":
+                self.pos += 1
+            body = self.parse_program_atom()
+            return WhileProg(guard, body, invariant)
+        
+        # For loop: for 0 ≤ i < n do α
+        # Syntax variants: "for 0 <= i < n do α" or "for 0 ≤ i < n do α"
+        if token == "FOR":
+            self.pos += 1
+            # Expect: 0 ≤ i < n do α
+            # Skip the "0"
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == "0":
+                self.pos += 1
+            # Skip the "≤" or "<="
+            if self.pos < len(self.tokens) and self.tokens[self.pos] in ["<=", "≤"]:
+                self.pos += 1
+            # Get loop variable
+            loop_var = self.tokens[self.pos] if self.pos < len(self.tokens) else "i"
+            self.pos += 1
+            # Skip the "<"
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == "<":
+                self.pos += 1
+            # Get bound variable
+            bound_var = self.tokens[self.pos] if self.pos < len(self.tokens) else "n"
+            self.pos += 1
+            # Skip "DO"
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == "DO":
+                self.pos += 1
+            # Parse body
+            body = self.parse_program_atom()
+            return ForProg(loop_var, bound_var, body)
+        
+        # Skip program
+        if token == "SKIP":
+            self.pos += 1
+            return Skip()
+        
+        # Parenthesized program
+        if token == "(":
+            self.pos += 1
+            prog = self.parse_program()
+            if self.pos < len(self.tokens) and self.tokens[self.pos] == ")":
+                self.pos += 1
+            return prog
+        
+        # Assignment: x := e (look ahead for :=)
+        if self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1] == ":=":
+            var = token
+            self.pos += 2  # consume var and :=
+            # Parse a simple expression (stop at special tokens)
+            if self.pos < len(self.tokens) and self.tokens[self.pos] not in ["]", "⟩", ";", "*"]:
+                expr_token = self.tokens[self.pos]
+                self.pos += 1
+                expr = Atom(expr_token)
+            else:
+                expr = Atom("")
+            return Assign(var, expr)
+        
+        # Default: treat as a simple variable/action
+        self.pos += 1
+        return Assign(token, Atom(token))  # Fallback
+
+    def parse_simple_formula_for_program(self):
+        """Parse a simple formula inside a program (stops at program keywords)."""
+        if self.pos >= len(self.tokens):
+            return Atom("")
+        token = self.tokens[self.pos]
+        # Stop tokens for program context
+        if token in ["]", "⟩", ";", "THEN", "ELSE", "DO", "*"]:
+            return Atom("")
+        self.pos += 1
+        return Atom(token)
+
     def parse_atom(self):
+        if self.pos >= len(self.tokens):
+            return Atom("")
         token = self.tokens[self.pos]
         self.pos += 1
         if token == "(":
-            expr = self.parse_implies()
+            expr = self.parse_iff()
             if self.pos < len(self.tokens) and self.tokens[self.pos] == ")":
                 self.pos += 1
             return expr
+        elif token == "TOP":
+            return Top()
+        elif token == "BOT":
+            return Bottom()
+        elif token == "[":
+            # Handle box modality at atom level
+            self.pos -= 1  # Put back the [
+            return self.parse_modality()
         return Atom(token)
 
 
@@ -167,10 +851,12 @@ class ProofNode:
         return child
 
 class SequentProverApp:
+    CUSTOM_RULES_FILE = "custom_rules.json"
+    
     def __init__(self, root):
         self.root = root
         self.root.title("Sequent Calculus Assistant")
-        self.root.geometry("1100x750")
+        self.root.geometry("1100x850")
 
         # --- 1. Theming & Styles ---
         self.style = ttk.Style()
@@ -197,8 +883,26 @@ class SequentProverApp:
         self.node_map = {}
         self.current_proof_node = None
         self.current_tree_id = None
+        
+        # Custom rules storage
+        self.custom_rules = self._load_custom_rules()
 
         self._setup_ui()
+
+    def _load_custom_rules(self):
+        """Load custom rules from JSON file."""
+        if os.path.exists(self.CUSTOM_RULES_FILE):
+            try:
+                with open(self.CUSTOM_RULES_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                return []
+        return []
+
+    def _save_custom_rules(self):
+        """Save custom rules to JSON file."""
+        with open(self.CUSTOM_RULES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(self.custom_rules, f, indent=2, ensure_ascii=False)
 
     def _setup_ui(self):
         main_container = ttk.Frame(self.root, padding="15")
@@ -311,62 +1015,208 @@ class SequentProverApp:
             "<<ListboxSelect>>", lambda e: self.on_formula_select("rhs")
         )
 
-        # 2. Rule Controls
+        # 2. Rule Controls with Tabbed Interface
         controls_frame = ttk.LabelFrame(
-            work_frame, text=" 🛠 Rule Application ", padding=10
+            work_frame, text=" 🛠 Rule Application ", padding=5
         )
-        controls_frame.pack(fill=tk.X, padx=(10, 0), pady=(10, 0))
+        controls_frame.pack(fill=tk.BOTH, expand=True, padx=(10, 0), pady=(10, 0))
 
-        # Grid Headers
-        ttk.Label(
-            controls_frame,
-            text="Connective",
-            font=("Segoe UI", 9, "bold"),
-            foreground="#666",
-        ).grid(row=0, column=0, pady=5)
-        ttk.Label(
-            controls_frame,
-            text="Left Rule (Antecedent)",
-            font=("Segoe UI", 9, "bold"),
-            foreground="#666",
-        ).grid(row=0, column=1, pady=5)
-        ttk.Label(
-            controls_frame,
-            text="Right Rule (Succedent)",
-            font=("Segoe UI", 9, "bold"),
-            foreground="#666",
-        ).grid(row=0, column=2, pady=5)
+        # Create Notebook (Tabbed Interface) for organizing rules
+        rule_notebook = ttk.Notebook(controls_frame)
+        rule_notebook.pack(fill=tk.BOTH, expand=True)
 
-        def create_rule_row(row, symbol, name, cmd_l, cmd_r):
-            lbl = ttk.Label(
-                controls_frame, text=f"{symbol} ({name})", font=self.symbol_font
-            )
-            lbl.grid(row=row, column=0, padx=10, pady=2)
-            btn_l = ttk.Button(controls_frame, text=f"{symbol} Left", command=cmd_l)
-            btn_l.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
-            btn_r = ttk.Button(controls_frame, text=f"{symbol} Right", command=cmd_r)
-            btn_r.grid(row=row, column=2, sticky="ew", padx=5, pady=2)
+        # =====================================================================
+        # TAB 1: Propositional Logic Rules
+        # =====================================================================
+        prop_frame = ttk.Frame(rule_notebook, padding=10)
+        rule_notebook.add(prop_frame, text="📐 Propositional")
 
-        create_rule_row(1, "∧", "And", self.rule_and_l, self.rule_and_r)
-        create_rule_row(2, "∨", "Or", self.rule_or_l, self.rule_or_r)
-        create_rule_row(3, "→", "Implies", self.rule_imp_l, self.rule_imp_r)
-        create_rule_row(4, "¬", "Not", self.rule_not_l, self.rule_not_r)
+        # Grid Headers for propositional rules
+        ttk.Label(prop_frame, text="Connective", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=0, pady=5)
+        ttk.Label(prop_frame, text="Left Rule (Antecedent)", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=1, pady=5)
+        ttk.Label(prop_frame, text="Right Rule (Succedent)", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=2, pady=5)
 
-        sep = ttk.Separator(controls_frame, orient="horizontal")
-        sep.grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
+        def create_rule_row(parent, row, symbol, name, cmd_l, cmd_r):
+            ttk.Label(parent, text=f"{symbol} ({name})", font=self.symbol_font).grid(row=row, column=0, padx=10, pady=2)
+            ttk.Button(parent, text=f"{symbol}L", command=cmd_l, width=10).grid(row=row, column=1, sticky="ew", padx=5, pady=2)
+            ttk.Button(parent, text=f"{symbol}R", command=cmd_r, width=10).grid(row=row, column=2, sticky="ew", padx=5, pady=2)
 
+        create_rule_row(prop_frame, 1, "∧", "And", self.rule_and_l, self.rule_and_r)
+        create_rule_row(prop_frame, 2, "∨", "Or", self.rule_or_l, self.rule_or_r)
+        create_rule_row(prop_frame, 3, "→", "Implies", self.rule_imp_l, self.rule_imp_r)
+        create_rule_row(prop_frame, 4, "¬", "Not", self.rule_not_l, self.rule_not_r)
+        create_rule_row(prop_frame, 5, "↔", "Iff", self.rule_iff_l, self.rule_iff_r)
+
+        # Constants section
+        ttk.Separator(prop_frame, orient="horizontal").grid(row=6, column=0, columnspan=3, sticky="ew", pady=5)
+        ttk.Label(prop_frame, text="Constants", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=7, column=0, pady=2)
+        
+        # Bottom (⊥) buttons
+        bot_frame = ttk.Frame(prop_frame)
+        bot_frame.grid(row=7, column=1, sticky="ew", padx=5, pady=2)
+        ttk.Button(bot_frame, text="⊥L", command=self.rule_bot_l, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(bot_frame, text="⊥R", command=self.rule_bot_r, width=5).pack(side=tk.LEFT, padx=1)
+        
+        # Top (⊤) buttons
+        top_frame = ttk.Frame(prop_frame)
+        top_frame.grid(row=7, column=2, sticky="ew", padx=5, pady=2)
+        ttk.Button(top_frame, text="⊤L", command=self.rule_top_l, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(top_frame, text="⊤R", command=self.rule_top_r, width=5).pack(side=tk.LEFT, padx=1)
+
+        prop_frame.columnconfigure(1, weight=1)
+        prop_frame.columnconfigure(2, weight=1)
+
+        # =====================================================================
+        # TAB 2: Quantifier Rules
+        # =====================================================================
+        quant_frame = ttk.Frame(rule_notebook, padding=10)
+        rule_notebook.add(quant_frame, text="∀∃ Quantifiers")
+
+        ttk.Label(quant_frame, text="Quantifier", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=0, pady=5)
+        ttk.Label(quant_frame, text="Left Rule", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=1, pady=5)
+        ttk.Label(quant_frame, text="Right Rule", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=2, pady=5)
+
+        create_rule_row(quant_frame, 1, "∀", "Forall", self.rule_forall_l, self.rule_forall_r)
+        create_rule_row(quant_frame, 2, "∃", "Exists", self.rule_exists_l, self.rule_exists_r)
+
+        # Help text for quantifier rules
+        ttk.Label(quant_frame, text="∀R/∃L: Uses fresh variable", font=("Segoe UI", 9, "italic"), foreground="#666").grid(row=3, column=0, columnspan=3, pady=10, sticky="w")
+        ttk.Label(quant_frame, text="∀L/∃R: Prompts for instantiation term", font=("Segoe UI", 9, "italic"), foreground="#666").grid(row=4, column=0, columnspan=3, sticky="w")
+
+        quant_frame.columnconfigure(1, weight=1)
+        quant_frame.columnconfigure(2, weight=1)
+
+        # =====================================================================
+        # TAB 3: Dynamic Logic Rules (Box Modality)
+        # =====================================================================
+        dyn_frame = ttk.Frame(rule_notebook, padding=10)
+        rule_notebook.add(dyn_frame, text="[α] Dynamic Logic")
+
+        ttk.Label(dyn_frame, text="Program Construct", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=0, pady=5)
+        ttk.Label(dyn_frame, text="Rule", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=1, pady=5)
+        ttk.Label(dyn_frame, text="Description", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=0, column=2, pady=5, sticky="w")
+
+        # Assignment Rule
+        ttk.Label(dyn_frame, text="[:=] Assign", font=self.symbol_font).grid(row=1, column=0, padx=5, pady=2)
+        ttk.Button(dyn_frame, text="[:=]R", command=self.rule_assign_r, width=12).grid(row=1, column=1, padx=5, pady=2)
+        ttk.Label(dyn_frame, text="[x := e]Q → x' = e ⊢ Q[x'/x]", font=("Consolas", 9)).grid(row=1, column=2, sticky="w", padx=5)
+
+        # Test Rule
+        ttk.Label(dyn_frame, text="[?] Test", font=self.symbol_font).grid(row=2, column=0, padx=5, pady=2)
+        test_btn_frame = ttk.Frame(dyn_frame)
+        test_btn_frame.grid(row=2, column=1, padx=5, pady=2)
+        ttk.Button(test_btn_frame, text="[?]L", command=self.rule_test_l, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(test_btn_frame, text="[?]R", command=self.rule_test_r, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Label(dyn_frame, text="[?P]Q ↔ (P → Q)", font=("Consolas", 9)).grid(row=2, column=2, sticky="w", padx=5)
+
+        # Sequence Rule
+        ttk.Label(dyn_frame, text="[;] Sequence", font=self.symbol_font).grid(row=3, column=0, padx=5, pady=2)
+        seq_btn_frame = ttk.Frame(dyn_frame)
+        seq_btn_frame.grid(row=3, column=1, padx=5, pady=2)
+        ttk.Button(seq_btn_frame, text="[;]L", command=self.rule_seq_l, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(seq_btn_frame, text="[;]R", command=self.rule_seq_r, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Label(dyn_frame, text="[α;β]Q → [α][β]Q", font=("Consolas", 9)).grid(row=3, column=2, sticky="w", padx=5)
+
+        # Skip Rule
+        ttk.Label(dyn_frame, text="[skip] Skip", font=self.symbol_font).grid(row=4, column=0, padx=5, pady=2)
+        skip_btn_frame = ttk.Frame(dyn_frame)
+        skip_btn_frame.grid(row=4, column=1, padx=5, pady=2)
+        ttk.Button(skip_btn_frame, text="[skip]L", command=self.rule_skip_l, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(skip_btn_frame, text="[skip]R", command=self.rule_skip_r, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Label(dyn_frame, text="[skip]Q → Q", font=("Consolas", 9)).grid(row=4, column=2, sticky="w", padx=5)
+
+        # Choice Rule
+        ttk.Label(dyn_frame, text="[∪] Choice", font=self.symbol_font).grid(row=5, column=0, padx=5, pady=2)
+        ttk.Button(dyn_frame, text="[∪]R", command=self.rule_choice_r, width=12).grid(row=5, column=1, padx=5, pady=2)
+        ttk.Label(dyn_frame, text="[α∪β]Q → [α]Q ∧ [β]Q", font=("Consolas", 9)).grid(row=5, column=2, sticky="w", padx=5)
+
+        # Loop Rule
+        ttk.Label(dyn_frame, text="[*] Loop", font=self.symbol_font).grid(row=6, column=0, padx=5, pady=2)
+        ttk.Button(dyn_frame, text="[*]unfold", command=self.rule_loop_unfold_r, width=12).grid(row=6, column=1, padx=5, pady=2)
+        ttk.Label(dyn_frame, text="Unfold loop once", font=("Consolas", 9)).grid(row=6, column=2, sticky="w", padx=5)
+
+        # Conditional Rule
+        ttk.Label(dyn_frame, text="[if] Conditional", font=self.symbol_font).grid(row=7, column=0, padx=5, pady=2)
+        ttk.Button(dyn_frame, text="[if]R", command=self.rule_if_r, width=12).grid(row=7, column=1, padx=5, pady=2)
+        ttk.Label(dyn_frame, text="Split on guard P", font=("Consolas", 9)).grid(row=7, column=2, sticky="w", padx=5)
+
+        # While Rules
+        ttk.Label(dyn_frame, text="[while] Loop", font=self.symbol_font).grid(row=8, column=0, padx=5, pady=2)
+        while_btn_frame = ttk.Frame(dyn_frame)
+        while_btn_frame.grid(row=8, column=1, padx=5, pady=2)
+        ttk.Button(while_btn_frame, text="unfold", command=self.rule_while_unfold_r, width=6).pack(side=tk.LEFT, padx=1)
+        ttk.Button(while_btn_frame, text="inv", command=self.rule_while_inv_r, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Label(dyn_frame, text="unfold or use invariant", font=("Consolas", 9)).grid(row=8, column=2, sticky="w", padx=5)
+
+        # For Loop Rule
+        ttk.Label(dyn_frame, text="[for] Bounded Loop", font=self.symbol_font).grid(row=9, column=0, padx=5, pady=2)
+        ttk.Button(dyn_frame, text="[for]R", command=self.rule_for_r, width=12).grid(row=9, column=1, padx=5, pady=2)
+        ttk.Label(dyn_frame, text="Desugar to while loop", font=("Consolas", 9)).grid(row=9, column=2, sticky="w", padx=5)
+
+        dyn_frame.columnconfigure(2, weight=1)
+
+        # =====================================================================
+        # TAB 4: Structural Rules
+        # =====================================================================
+        struct_frame = ttk.Frame(rule_notebook, padding=10)
+        rule_notebook.add(struct_frame, text="⚙ Structural")
+
+        ttk.Label(struct_frame, text="Structural rules modify sequent structure", font=("Segoe UI", 10, "italic"), foreground="#666").grid(row=0, column=0, columnspan=2, pady=10, sticky="w")
+
+        # Weakening
+        ttk.Label(struct_frame, text="Weakening", font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        weak_frame = ttk.Frame(struct_frame)
+        weak_frame.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Button(weak_frame, text="WL (Add to LHS)", command=self.rule_weaken_l, width=15).pack(side=tk.LEFT, padx=2)
+        ttk.Button(weak_frame, text="WR (Add to RHS)", command=self.rule_weaken_r, width=15).pack(side=tk.LEFT, padx=2)
+
+        # Contraction
+        ttk.Label(struct_frame, text="Contraction", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        contr_frame = ttk.Frame(struct_frame)
+        contr_frame.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+        ttk.Button(contr_frame, text="CL (Contract LHS)", command=self.rule_contract_l, width=15).pack(side=tk.LEFT, padx=2)
+        ttk.Button(contr_frame, text="CR (Contract RHS)", command=self.rule_contract_r, width=15).pack(side=tk.LEFT, padx=2)
+
+        # Cut
+        ttk.Label(struct_frame, text="Cut", font=("Segoe UI", 10, "bold")).grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        ttk.Button(struct_frame, text="Cut (Introduce formula)", command=self.rule_cut, width=20).grid(row=3, column=1, sticky="w", padx=5, pady=5)
+
+        # Help text
+        ttk.Separator(struct_frame, orient="horizontal").grid(row=4, column=0, columnspan=2, sticky="ew", pady=10)
+        help_text = """• Weakening: Adds extra (unused) formula to the sequent
+• Contraction: Removes duplicate formula (must appear 2+ times)
+• Cut: Introduces a lemma to split the proof into two branches"""
+        ttk.Label(struct_frame, text=help_text, font=("Segoe UI", 9), foreground="#555", justify=tk.LEFT).grid(row=5, column=0, columnspan=2, sticky="w", padx=5)
+
+        struct_frame.columnconfigure(1, weight=1)
+
+        # =====================================================================
+        # TAB 5: Custom Rules
+        # =====================================================================
+        custom_tab_frame = ttk.Frame(rule_notebook, padding=10)
+        rule_notebook.add(custom_tab_frame, text="✨ Custom")
+        
+        custom_header = ttk.Frame(custom_tab_frame)
+        custom_header.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(custom_header, text="User-defined rules (saved to custom_rules.json)", font=("Segoe UI", 10, "italic"), foreground="#666").pack(side=tk.LEFT)
+        ttk.Button(custom_header, text="+ Add Rule", command=self.open_custom_rule_dialog).pack(side=tk.RIGHT, padx=5)
+        
+        # Frame to hold custom rule buttons
+        self.custom_rules_frame = ttk.Frame(custom_tab_frame)
+        self.custom_rules_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Load and display any existing custom rules
+        self._refresh_custom_rules_ui()
+
+        # =====================================================================
+        # Action Buttons (Always visible below tabs)
+        # =====================================================================
         action_frame = ttk.Frame(controls_frame)
-        action_frame.grid(row=6, column=0, columnspan=3, sticky="ew")
+        action_frame.pack(fill=tk.X, pady=(10, 5))
 
-        ttk.Button(
-            action_frame, text="✔ Check Identity (Axiom)", command=self.rule_id
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-        ttk.Button(action_frame, text="↶ Undo Last Step", command=self.undo_step).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=2
-        )
-
-        controls_frame.columnconfigure(1, weight=1)
-        controls_frame.columnconfigure(2, weight=1)
+        ttk.Button(action_frame, text="✔ Identity (Axiom)", command=self.rule_id).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        ttk.Button(action_frame, text="↶ Undo Step", command=self.undo_step).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
         # Status Bar
         self.status_var = tk.StringVar(value="Ready. Enter a sequent to begin.")
@@ -591,6 +1441,80 @@ class SequentProverApp:
             return
         self.apply_unary_rule("¬R", [f.inner], [])
 
+    def rule_iff_l(self):
+        """Bi-implication Left: Γ, F ↔ G ⊢ Δ becomes two branches:
+           Branch 1: Γ, F, G ⊢ Δ (both true)
+           Branch 2: Γ ⊢ F, G, Δ (both false)
+        """
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Iff) or self.selected_side != "lhs":
+            return
+        self.apply_binary_rule("↔L", ([f.left, f.right], []), ([], [f.left, f.right]))
+
+    def rule_iff_r(self):
+        """Bi-implication Right: Γ ⊢ F ↔ G, Δ becomes two branches:
+           Branch 1: Γ, F ⊢ G, Δ (F implies G)
+           Branch 2: Γ, G ⊢ F, Δ (G implies F)
+        """
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Iff) or self.selected_side != "rhs":
+            return
+        self.apply_binary_rule("↔R", ([f.left], [f.right]), ([f.right], [f.left]))
+
+    def rule_top_r(self):
+        """⊤R: Γ ⊢ ⊤, Δ is automatically closed (true is always provable on the right)"""
+        if not self.current_proof_node:
+            return
+        node = self.current_proof_node
+        
+        # Check if Top (⊤) is in the succedent
+        has_top = any(isinstance(f, Top) for f in node.sequent.rhs)
+        
+        if has_top:
+            node.is_closed = True
+            node.rule_applied = "⊤R"
+            self.tree.item(self.current_tree_id, text="✔ " + str(node.sequent))
+            self.status_var.set("Branch Closed by ⊤R (True is always provable).")
+        else:
+            messagebox.showinfo("⊤R", "No ⊤ (True) found in the succedent.")
+
+    def rule_bot_l(self):
+        """⊥L: Γ, ⊥ ⊢ Δ is automatically closed (false in antecedent proves anything)"""
+        if not self.current_proof_node:
+            return
+        node = self.current_proof_node
+        
+        # Check if Bottom (⊥) is in the antecedent
+        has_bot = any(isinstance(f, Bottom) for f in node.sequent.lhs)
+        
+        if has_bot:
+            node.is_closed = True
+            node.rule_applied = "⊥L"
+            self.tree.item(self.current_tree_id, text="✔ " + str(node.sequent))
+            self.status_var.set("Branch Closed by ⊥L (False implies anything).")
+        else:
+            messagebox.showinfo("⊥L", "No ⊥ (False/Bottom) found in the antecedent.")
+
+    def rule_bot_r(self):
+        """⊥R: Γ ⊢ ⊥, Δ ---> Γ ⊢ Δ (removes ⊥ from succedent, cannot prove false directly)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Bottom) or self.selected_side != "rhs":
+            messagebox.showinfo("⊥R", "Select ⊥ (False/Bottom) in the succedent.")
+            return
+        # Remove ⊥ from the RHS
+        self.apply_unary_rule("⊥R", [], [])
+        self.status_var.set("Applied ⊥R (removed ⊥ from succedent).")
+
+    def rule_top_l(self):
+        """⊤L: Γ, ⊤ ⊢ Δ ---> Γ ⊢ Δ (removes vacuous ⊤ from antecedent)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Top) or self.selected_side != "lhs":
+            messagebox.showinfo("⊤L", "Select ⊤ (True/Top) in the antecedent.")
+            return
+        # Remove ⊤ from the LHS
+        self.apply_unary_rule("⊤L", [], [])
+        self.status_var.set("Applied ⊤L (removed vacuous ⊤ from antecedent).")
+
     def rule_id(self):
         if not self.current_proof_node:
             return
@@ -625,6 +1549,456 @@ class SequentProverApp:
                 self.tree.selection_set(parent_id)
                 self.on_tree_select(None)
                 self.status_var.set("Undid last step.")
+
+    # =========================================================================
+    # QUANTIFIER RULES
+    # =========================================================================
+
+    def rule_forall_r(self):
+        """∀R: Γ ⊢ ∀x.P(x), Δ  --->  Γ ⊢ P(x'), Δ where x' is fresh"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Forall) or self.selected_side != "rhs":
+            return
+        # Generate a fresh variable
+        fresh_var = self.parser.get_fresh_var(f.var)
+        # Substitute fresh variable in the body (simplified - just renames in display)
+        new_body = self._substitute(f.inner, f.var, Atom(fresh_var))
+        self.apply_unary_rule("∀R", [], [new_body])
+        self.status_var.set(f"Applied ∀R with fresh variable {fresh_var}")
+
+    def rule_forall_l(self):
+        """∀L: Γ, ∀x.P(x) ⊢ Δ  --->  Γ, ∀x.P(x), P(e) ⊢ Δ (instantiate with term)
+           For simplicity, prompts user for the instantiation term."""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Forall) or self.selected_side != "lhs":
+            return
+        # Ask user for the instantiation term
+        term = self._ask_for_term(f"Instantiate {f.var} with:")
+        if term is None:
+            return
+        # Keep the original formula and add the instantiated version
+        new_body = self._substitute(f.inner, f.var, self.parser.parse(term))
+        self.apply_unary_rule("∀L", [f, new_body], [])
+        self.status_var.set(f"Applied ∀L with {f.var} = {term}")
+
+    def rule_exists_r(self):
+        """∃R: Γ ⊢ ∃x.P(x), Δ  --->  Γ ⊢ P(e), ∃x.P(x), Δ (instantiate with term)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Exists) or self.selected_side != "rhs":
+            return
+        term = self._ask_for_term(f"Instantiate {f.var} with:")
+        if term is None:
+            return
+        new_body = self._substitute(f.inner, f.var, self.parser.parse(term))
+        self.apply_unary_rule("∃R", [], [new_body, f])
+        self.status_var.set(f"Applied ∃R with {f.var} = {term}")
+
+    def rule_exists_l(self):
+        """∃L: Γ, ∃x.P(x) ⊢ Δ  --->  Γ, P(x') ⊢ Δ where x' is fresh"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Exists) or self.selected_side != "lhs":
+            return
+        fresh_var = self.parser.get_fresh_var(f.var)
+        new_body = self._substitute(f.inner, f.var, Atom(fresh_var))
+        self.apply_unary_rule("∃L", [new_body], [])
+        self.status_var.set(f"Applied ∃L with fresh variable {fresh_var}")
+
+    def _ask_for_term(self, prompt):
+        """Show dialog to ask for a term."""
+        from tkinter import simpledialog
+        return simpledialog.askstring("Input Required", prompt, parent=self.root)
+
+    def _substitute(self, formula, var, replacement):
+        """Substitute var with replacement in formula (simple implementation)."""
+        if isinstance(formula, Atom):
+            if formula.name == var:
+                return replacement
+            return formula
+        elif isinstance(formula, Not):
+            return Not(self._substitute(formula.inner, var, replacement))
+        elif isinstance(formula, (And, Or, Implies, Iff)):
+            return type(formula)(
+                self._substitute(formula.left, var, replacement),
+                self._substitute(formula.right, var, replacement)
+            )
+        elif isinstance(formula, (Equals, NotEquals, LessThan, LessEq, GreaterThan, GreaterEq)):
+            return type(formula)(
+                self._substitute(formula.left, var, replacement),
+                self._substitute(formula.right, var, replacement)
+            )
+        elif isinstance(formula, Forall):
+            if formula.var == var:
+                return formula  # Bound variable, don't substitute
+            return Forall(formula.var, self._substitute(formula.inner, var, replacement))
+        elif isinstance(formula, Exists):
+            if formula.var == var:
+                return formula
+            return Exists(formula.var, self._substitute(formula.inner, var, replacement))
+        elif isinstance(formula, Box):
+            return Box(formula.program, self._substitute(formula.postcondition, var, replacement))
+        elif isinstance(formula, Diamond):
+            return Diamond(formula.program, self._substitute(formula.postcondition, var, replacement))
+        return formula
+
+    # =========================================================================
+    # DYNAMIC LOGIC - BOX MODALITY RULES
+    # =========================================================================
+
+    def rule_assign_r(self):
+        """[:=]R: Γ ⊢ [x := e]Q, Δ  --->  Γ, x' = e ⊢ Q[x'/x], Δ where x' is fresh"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, Assign):
+            messagebox.showinfo("[:=]R", "Selected formula must be [x := e]Q")
+            return
+        prog = f.program
+        fresh_var = self.parser.get_fresh_var(prog.var)
+        # Create equality: x' = e
+        equality = Equals(Atom(fresh_var), prog.expr)
+        # Substitute x with x' in postcondition
+        new_post = self._substitute(f.postcondition, prog.var, Atom(fresh_var))
+        self.apply_unary_rule("[:=]R", [equality], [new_post])
+        self.status_var.set(f"Applied [:=]R with fresh variable {fresh_var}")
+
+    def rule_test_r(self):
+        """[?]R: Γ ⊢ [?P]Q, Δ  --->  Γ, P ⊢ Q, Δ"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, Test):
+            messagebox.showinfo("[?]R", "Selected formula must be [?P]Q")
+            return
+        test_formula = f.program.formula
+        self.apply_unary_rule("[?]R", [test_formula], [f.postcondition])
+        self.status_var.set("Applied [?]R (test right)")
+
+    def rule_test_l(self):
+        """[?]L: Γ, [?P]Q ⊢ Δ  --->  (Γ ⊢ P, Δ) AND (Γ, Q ⊢ Δ)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "lhs":
+            return
+        if not isinstance(f.program, Test):
+            messagebox.showinfo("[?]L", "Selected formula must be [?P]Q")
+            return
+        test_formula = f.program.formula
+        self.apply_binary_rule("[?]L", ([], [test_formula]), ([f.postcondition], []))
+        self.status_var.set("Applied [?]L (test left)")
+
+    def rule_seq_r(self):
+        """[;]R: Γ ⊢ [α;β]Q, Δ  --->  Γ ⊢ [α][β]Q, Δ"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, Seq):
+            messagebox.showinfo("[;]R", "Selected formula must be [α;β]Q")
+            return
+        prog = f.program
+        # [α;β]Q becomes [α][β]Q
+        inner_box = Box(prog.second, f.postcondition)
+        outer_box = Box(prog.first, inner_box)
+        self.apply_unary_rule("[;]R", [], [outer_box])
+        self.status_var.set("Applied [;]R (sequence composition)")
+
+    def rule_seq_l(self):
+        """[;]L: Γ, [α;β]Q ⊢ Δ  --->  Γ, [α][β]Q ⊢ Δ"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "lhs":
+            return
+        if not isinstance(f.program, Seq):
+            messagebox.showinfo("[;]L", "Selected formula must be [α;β]Q")
+            return
+        prog = f.program
+        # [α;β]Q becomes [α][β]Q on the left
+        inner_box = Box(prog.second, f.postcondition)
+        outer_box = Box(prog.first, inner_box)
+        self.apply_unary_rule("[;]L", [outer_box], [])
+        self.status_var.set("Applied [;]L (sequence composition left)")
+
+    def rule_skip_r(self):
+        """[skip]R: Γ ⊢ [skip]Q, Δ  --->  Γ ⊢ Q, Δ"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, Skip):
+            messagebox.showinfo("[skip]R", "Selected formula must be [skip]Q")
+            return
+        self.apply_unary_rule("[skip]R", [], [f.postcondition])
+        self.status_var.set("Applied [skip]R")
+
+    def rule_skip_l(self):
+        """[skip]L: Γ, [skip]Q ⊢ Δ  --->  Γ, Q ⊢ Δ"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "lhs":
+            return
+        if not isinstance(f.program, Skip):
+            messagebox.showinfo("[skip]L", "Selected formula must be [skip]Q")
+            return
+        self.apply_unary_rule("[skip]L", [f.postcondition], [])
+        self.status_var.set("Applied [skip]L")
+
+    def rule_choice_r(self):
+        """[∪]R: Γ ⊢ [α∪β]Q, Δ  --->  (Γ ⊢ [α]Q, Δ) AND (Γ ⊢ [β]Q, Δ)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, Choice):
+            messagebox.showinfo("[∪]R", "Selected formula must be [α∪β]Q")
+            return
+        prog = f.program
+        box_left = Box(prog.left, f.postcondition)
+        box_right = Box(prog.right, f.postcondition)
+        self.apply_binary_rule("[∪]R", ([], [box_left]), ([], [box_right]))
+        self.status_var.set("Applied [∪]R (choice right)")
+
+    def rule_loop_unfold_r(self):
+        """[*]unfold: Γ ⊢ [α*]Q, Δ  --->  (Γ ⊢ Q, Δ) AND (Γ ⊢ [α][α*]Q, Δ)
+           Loop unfolds to: (base case: exit loop) OR (step: do α then repeat)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, Loop):
+            messagebox.showinfo("[*]R", "Selected formula must be [α*]Q")
+            return
+        prog = f.program
+        # Base case: Q holds immediately (zero iterations)
+        # Step case: [α][α*]Q - do one iteration then continue
+        step_box = Box(prog.body, f)
+        self.apply_binary_rule("[*]unfold", ([], [f.postcondition]), ([], [step_box]))
+        self.status_var.set("Applied [*]unfold (loop unfolding)")
+
+    def rule_if_r(self):
+        """[if]R: Γ ⊢ [if P then α else β]Q, Δ  --->  
+           (Γ, P ⊢ [α]Q, Δ) AND (Γ, ¬P ⊢ [β]Q, Δ)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, IfProg):
+            messagebox.showinfo("[if]R", "Selected formula must be [if P then α else β]Q")
+            return
+        prog = f.program
+        then_box = Box(prog.then_branch, f.postcondition)
+        else_box = Box(prog.else_branch, f.postcondition)
+        neg_guard = Not(prog.guard)
+        self.apply_binary_rule("[if]R", ([prog.guard], [then_box]), ([neg_guard], [else_box]))
+        self.status_var.set("Applied [if]R (conditional)")
+
+    def rule_while_unfold_r(self):
+        """[while]unfold: Γ ⊢ [while P do α]Q, Δ  --->
+           (Γ, P ⊢ [α][while P do α]Q, Δ) AND (Γ, ¬P ⊢ Q, Δ)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, WhileProg):
+            messagebox.showinfo("[while]R", "Selected formula must be [while P do α]Q")
+            return
+        prog = f.program
+        # Continue case: guard true, do body, then repeat
+        continue_box = Box(prog.body, f)
+        neg_guard = Not(prog.guard)
+        self.apply_binary_rule("[while]unfold", ([prog.guard], [continue_box]), ([neg_guard], [f.postcondition]))
+        self.status_var.set("Applied [while]unfold")
+
+    def rule_while_inv_r(self):
+        """[while]inv: Use loop invariant J
+           Γ ⊢ [while_J P do α]Q, Δ  requires:
+           1. Γ ⊢ J, Δ  (invariant holds initially)
+           2. J, P ⊢ [α]J  (invariant preserved)
+           3. J, ¬P ⊢ Q  (invariant implies postcondition when loop exits)"""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, WhileProg) or f.program.invariant is None:
+            messagebox.showinfo("[while]inv", 
+                "This rule requires a loop with invariant: while_J P do α\n"
+                "Use [while]unfold for loops without invariant annotation.")
+            return
+        prog = f.program
+        J = prog.invariant
+        neg_guard = Not(prog.guard)
+        body_box = Box(prog.body, J)
+        
+        # Create three branches using a special ternary rule
+        node, seq, target = self.get_target()
+        if not node:
+            return
+        
+        base_lhs = seq.lhs[:]
+        base_rhs = seq.rhs[:]
+        del base_rhs[self.selected_formula_index]
+        
+        # Branch 1: Γ ⊢ J, Δ
+        b1_seq = Sequent(base_lhs[:], base_rhs + [J])
+        node.add_child(b1_seq)
+        
+        # Branch 2: J, P ⊢ [α]J
+        b2_seq = Sequent([J, prog.guard], [body_box])
+        node.add_child(b2_seq)
+        
+        # Branch 3: J, ¬P ⊢ Q
+        b3_seq = Sequent([J, neg_guard], [f.postcondition])
+        node.add_child(b3_seq)
+        
+        node.rule_applied = "[while]inv"
+        self.update_tree_display(node, self.current_tree_id)
+        self.tree.item(self.current_tree_id, open=True)
+        self.status_var.set("Applied [while]inv with 3 branches")
+
+    def rule_for_r(self):
+        """[for]R: Desugar for loop to while loop
+           [for 0 ≤ i < n do α]Q  --->  [i := 0; while (i < n) do (α; i := i + 1)]Q
+           
+           This rule desugars the bounded for loop into an assignment followed by
+           a while loop with the iteration variable being incremented after each body execution.
+        """
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Box) or self.selected_side != "rhs":
+            return
+        if not isinstance(f.program, ForProg):
+            messagebox.showinfo("[for]R", "Selected formula must be [for 0 ≤ i < n do α]Q")
+            return
+        
+        prog = f.program
+        i = prog.loop_var
+        n = prog.bound_var
+        alpha = prog.body
+        Q = f.postcondition
+        
+        # Build the desugared program:
+        # i := 0; while (i < n) do (α; i := i + 1)
+        
+        # i := 0
+        init_assign = Assign(i, Atom("0"))
+        
+        # i < n (guard)
+        guard = LessThan(Atom(i), Atom(n))
+        
+        # i := i + 1 (increment) - simplified as i := i+1 atom
+        increment = Assign(i, Atom(f"{i}+1"))
+        
+        # α; i := i + 1 (body with increment)
+        body_with_inc = Seq(alpha, increment)
+        
+        # while (i < n) do (α; i := i + 1)
+        while_prog = WhileProg(guard, body_with_inc)
+        
+        # i := 0; while_loop
+        full_prog = Seq(init_assign, while_prog)
+        
+        # [full_prog]Q
+        desugared_box = Box(full_prog, Q)
+        
+        self.apply_unary_rule("[for]R", [], [desugared_box])
+        self.status_var.set("Applied [for]R (desugared to while loop)")
+
+    # =========================================================================
+    # STRUCTURAL RULES
+    # =========================================================================
+
+    def rule_weaken_l(self):
+        """WL (Weakening Left): Add a formula to the antecedent"""
+        if not self.current_proof_node:
+            return
+        node = self.current_proof_node
+        if node.children or node.is_closed:
+            messagebox.showwarning("Error", "Can only apply to leaf node.")
+            return
+        formula_str = self._ask_for_term("Formula to add to antecedent (LHS):")
+        if formula_str is None:
+            return
+        formula = self.parser.parse(formula_str)
+        if formula:
+            new_lhs = node.sequent.lhs[:] + [formula]
+            new_seq = Sequent(new_lhs, node.sequent.rhs[:])
+            node.add_child(new_seq)
+            node.rule_applied = "WL"
+            self.update_tree_display(node, self.current_tree_id)
+            self.status_var.set(f"Applied WL: added {formula}")
+
+    def rule_weaken_r(self):
+        """WR (Weakening Right): Add a formula to the succedent"""
+        if not self.current_proof_node:
+            return
+        node = self.current_proof_node
+        if node.children or node.is_closed:
+            messagebox.showwarning("Error", "Can only apply to leaf node.")
+            return
+        formula_str = self._ask_for_term("Formula to add to succedent (RHS):")
+        if formula_str is None:
+            return
+        formula = self.parser.parse(formula_str)
+        if formula:
+            new_rhs = node.sequent.rhs[:] + [formula]
+            new_seq = Sequent(node.sequent.lhs[:], new_rhs)
+            node.add_child(new_seq)
+            node.rule_applied = "WR"
+            self.update_tree_display(node, self.current_tree_id)
+            self.status_var.set(f"Applied WR: added {formula}")
+
+    def rule_contract_l(self):
+        """CL (Contraction Left): Remove duplicate formula from antecedent"""
+        node, seq, f = self.get_target()
+        if not node or self.selected_side != "lhs":
+            return
+        # Check if formula appears more than once
+        count = sum(1 for x in seq.lhs if str(x) == str(f))
+        if count < 2:
+            messagebox.showinfo("CL", "Formula must appear at least twice to contract.")
+            return
+        new_lhs = seq.lhs[:]
+        del new_lhs[self.selected_formula_index]
+        new_seq = Sequent(new_lhs, seq.rhs[:])
+        node.add_child(new_seq)
+        node.rule_applied = "CL"
+        self.update_tree_display(node, self.current_tree_id)
+        self.status_var.set("Applied CL (contraction left)")
+
+    def rule_contract_r(self):
+        """CR (Contraction Right): Remove duplicate formula from succedent"""
+        node, seq, f = self.get_target()
+        if not node or self.selected_side != "rhs":
+            return
+        count = sum(1 for x in seq.rhs if str(x) == str(f))
+        if count < 2:
+            messagebox.showinfo("CR", "Formula must appear at least twice to contract.")
+            return
+        new_rhs = seq.rhs[:]
+        del new_rhs[self.selected_formula_index]
+        new_seq = Sequent(seq.lhs[:], new_rhs)
+        node.add_child(new_seq)
+        node.rule_applied = "CR"
+        self.update_tree_display(node, self.current_tree_id)
+        self.status_var.set("Applied CR (contraction right)")
+
+    def rule_cut(self):
+        """Cut: Introduce a formula C to split the proof
+           Γ ⊢ Δ  --->  (Γ ⊢ C, Δ) AND (Γ, C ⊢ Δ)"""
+        if not self.current_proof_node:
+            return
+        node = self.current_proof_node
+        if node.children or node.is_closed:
+            messagebox.showwarning("Error", "Can only apply to leaf node.")
+            return
+        formula_str = self._ask_for_term("Cut formula (C):")
+        if formula_str is None:
+            return
+        cut_formula = self.parser.parse(formula_str)
+        if cut_formula:
+            base_lhs = node.sequent.lhs[:]
+            base_rhs = node.sequent.rhs[:]
+            
+            # Branch 1: Γ ⊢ C, Δ (prove C)
+            b1_seq = Sequent(base_lhs[:], [cut_formula] + base_rhs[:])
+            node.add_child(b1_seq)
+            
+            # Branch 2: Γ, C ⊢ Δ (use C)
+            b2_seq = Sequent(base_lhs[:] + [cut_formula], base_rhs[:])
+            node.add_child(b2_seq)
+            
+            node.rule_applied = "cut"
+            self.update_tree_display(node, self.current_tree_id)
+            self.tree.item(self.current_tree_id, open=True)
+            self.status_var.set(f"Applied cut with formula: {cut_formula}")
 
     # --- Updated Export ---
 
@@ -703,6 +2077,259 @@ class SequentProverApp:
         scroll.config(command=txt.yview)
 
         txt.insert(tk.END, latex_code)
+
+    # --- Custom Rules System ---
+    
+    def _refresh_custom_rules_ui(self):
+        """Refresh the custom rules buttons in the UI."""
+        # Clear existing buttons
+        for widget in self.custom_rules_frame.winfo_children():
+            widget.destroy()
+        
+        if not self.custom_rules:
+            ttk.Label(
+                self.custom_rules_frame, 
+                text="No custom rules defined. Click '+ Add Rule' to create one.",
+                font=("Segoe UI", 9, "italic"),
+                foreground="#888"
+            ).pack(pady=5)
+            return
+        
+        # Create buttons for each custom rule
+        for i, rule in enumerate(self.custom_rules):
+            rule_frame = ttk.Frame(self.custom_rules_frame)
+            rule_frame.pack(fill=tk.X, pady=2)
+            
+            # Rule button
+            btn = ttk.Button(
+                rule_frame, 
+                text=f"{rule['name']} ({rule['side'].upper()})",
+                command=lambda r=rule: self._apply_custom_rule(r)
+            )
+            btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+            
+            # Delete button
+            del_btn = ttk.Button(
+                rule_frame,
+                text="×",
+                width=3,
+                command=lambda idx=i: self._delete_custom_rule(idx)
+            )
+            del_btn.pack(side=tk.RIGHT, padx=2)
+    
+    def _delete_custom_rule(self, index):
+        """Delete a custom rule by index."""
+        if 0 <= index < len(self.custom_rules):
+            rule_name = self.custom_rules[index]['name']
+            if messagebox.askyesno("Delete Rule", f"Delete custom rule '{rule_name}'?"):
+                del self.custom_rules[index]
+                self._save_custom_rules()
+                self._refresh_custom_rules_ui()
+                self.status_var.set(f"Custom rule '{rule_name}' deleted.")
+    
+    def _apply_custom_rule(self, rule):
+        """Apply a custom rule to the current sequent."""
+        node, seq, f = self.get_target()
+        if not node:
+            return
+        
+        # Check if we're on the correct side
+        if self.selected_side != rule['side']:
+            messagebox.showwarning(
+                "Wrong Side", 
+                f"This rule applies to the {rule['side'].upper()} side. "
+                f"Please select a formula from the {rule['side'].upper()}."
+            )
+            return
+        
+        # Parse what formulas to add to LHS and RHS
+        try:
+            # Replace placeholders with actual formula parts
+            def parse_additions(additions_str, formula):
+                if not additions_str.strip():
+                    return []
+                
+                result = []
+                parts = [p.strip() for p in additions_str.split(',')]
+                for part in parts:
+                    if not part:
+                        continue
+                    # Replace special placeholders
+                    if part.upper() == 'LEFT' and hasattr(f, 'left'):
+                        result.append(f.left)
+                    elif part.upper() == 'RIGHT' and hasattr(f, 'right'):
+                        result.append(f.right)
+                    elif part.upper() == 'INNER' and hasattr(f, 'inner'):
+                        result.append(f.inner)
+                    elif part.upper() == 'FORMULA':
+                        result.append(f)
+                    else:
+                        # Parse as a literal formula
+                        parsed = self.parser.parse(part)
+                        if parsed:
+                            result.append(parsed)
+                return result
+            
+            if rule['rule_type'] == 'unary':
+                new_lhs = parse_additions(rule.get('add_to_lhs', ''), f)
+                new_rhs = parse_additions(rule.get('add_to_rhs', ''), f)
+                self.apply_unary_rule(rule['name'], new_lhs, new_rhs)
+                self.status_var.set(f"Applied custom rule: {rule['name']}")
+            
+            elif rule['rule_type'] == 'binary':
+                # Branch 1
+                b1_lhs = parse_additions(rule.get('branch1_lhs', ''), f)
+                b1_rhs = parse_additions(rule.get('branch1_rhs', ''), f)
+                # Branch 2
+                b2_lhs = parse_additions(rule.get('branch2_lhs', ''), f)
+                b2_rhs = parse_additions(rule.get('branch2_rhs', ''), f)
+                self.apply_binary_rule(rule['name'], (b1_lhs, b1_rhs), (b2_lhs, b2_rhs))
+                self.status_var.set(f"Applied custom rule: {rule['name']}")
+            
+            elif rule['rule_type'] == 'close':
+                # Check condition and close if met
+                node.is_closed = True
+                node.rule_applied = rule['name']
+                self.tree.item(self.current_tree_id, text="✔ " + str(node.sequent))
+                self.status_var.set(f"Branch closed by custom rule: {rule['name']}")
+                
+        except Exception as e:
+            messagebox.showerror("Rule Error", f"Error applying rule: {e}")
+    
+    def open_custom_rule_dialog(self):
+        """Open a dialog to create a new custom rule."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Create Custom Rule")
+        dialog.geometry("500x550")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Main frame with padding
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Rule Name
+        ttk.Label(main_frame, text="Rule Name:", font=self.header_font).grid(
+            row=0, column=0, sticky="w", pady=5
+        )
+        name_var = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=name_var, font=self.mono_font).grid(
+            row=0, column=1, sticky="ew", pady=5
+        )
+        
+        # Side (LHS or RHS)
+        ttk.Label(main_frame, text="Applies to Side:", font=self.header_font).grid(
+            row=1, column=0, sticky="w", pady=5
+        )
+        side_var = tk.StringVar(value="lhs")
+        side_frame = ttk.Frame(main_frame)
+        side_frame.grid(row=1, column=1, sticky="w", pady=5)
+        ttk.Radiobutton(side_frame, text="LHS (Antecedent)", variable=side_var, value="lhs").pack(side=tk.LEFT)
+        ttk.Radiobutton(side_frame, text="RHS (Succedent)", variable=side_var, value="rhs").pack(side=tk.LEFT)
+        
+        # Rule Type
+        ttk.Label(main_frame, text="Rule Type:", font=self.header_font).grid(
+            row=2, column=0, sticky="w", pady=5
+        )
+        type_var = tk.StringVar(value="unary")
+        type_frame = ttk.Frame(main_frame)
+        type_frame.grid(row=2, column=1, sticky="w", pady=5)
+        ttk.Radiobutton(type_frame, text="Unary (1 branch)", variable=type_var, value="unary").pack(side=tk.LEFT)
+        ttk.Radiobutton(type_frame, text="Binary (2 branches)", variable=type_var, value="binary").pack(side=tk.LEFT)
+        ttk.Radiobutton(type_frame, text="Close Branch", variable=type_var, value="close").pack(side=tk.LEFT)
+        
+        # Separator
+        ttk.Separator(main_frame, orient="horizontal").grid(
+            row=3, column=0, columnspan=2, sticky="ew", pady=10
+        )
+        
+        # Help text
+        help_text = ttk.Label(
+            main_frame,
+            text="Use placeholders: LEFT, RIGHT (for binary formulas), INNER (for Not), FORMULA (entire formula)",
+            font=("Segoe UI", 9, "italic"),
+            foreground="#666",
+            wraplength=450
+        )
+        help_text.grid(row=4, column=0, columnspan=2, sticky="w", pady=5)
+        
+        # Unary rule inputs
+        unary_frame = ttk.LabelFrame(main_frame, text="Unary Rule (adds to sequent)", padding=10)
+        unary_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=5)
+        
+        ttk.Label(unary_frame, text="Add to LHS:").grid(row=0, column=0, sticky="w")
+        add_lhs_var = tk.StringVar()
+        ttk.Entry(unary_frame, textvariable=add_lhs_var, width=40).grid(row=0, column=1, sticky="ew", padx=5)
+        
+        ttk.Label(unary_frame, text="Add to RHS:").grid(row=1, column=0, sticky="w")
+        add_rhs_var = tk.StringVar()
+        ttk.Entry(unary_frame, textvariable=add_rhs_var, width=40).grid(row=1, column=1, sticky="ew", padx=5)
+        
+        # Binary rule inputs  
+        binary_frame = ttk.LabelFrame(main_frame, text="Binary Rule (two branches)", padding=10)
+        binary_frame.grid(row=6, column=0, columnspan=2, sticky="ew", pady=5)
+        
+        ttk.Label(binary_frame, text="Branch 1 - Add to LHS:").grid(row=0, column=0, sticky="w")
+        b1_lhs_var = tk.StringVar()
+        ttk.Entry(binary_frame, textvariable=b1_lhs_var, width=35).grid(row=0, column=1, sticky="ew", padx=5)
+        
+        ttk.Label(binary_frame, text="Branch 1 - Add to RHS:").grid(row=1, column=0, sticky="w")
+        b1_rhs_var = tk.StringVar()
+        ttk.Entry(binary_frame, textvariable=b1_rhs_var, width=35).grid(row=1, column=1, sticky="ew", padx=5)
+        
+        ttk.Label(binary_frame, text="Branch 2 - Add to LHS:").grid(row=2, column=0, sticky="w")
+        b2_lhs_var = tk.StringVar()
+        ttk.Entry(binary_frame, textvariable=b2_lhs_var, width=35).grid(row=2, column=1, sticky="ew", padx=5)
+        
+        ttk.Label(binary_frame, text="Branch 2 - Add to RHS:").grid(row=3, column=0, sticky="w")
+        b2_rhs_var = tk.StringVar()
+        ttk.Entry(binary_frame, textvariable=b2_rhs_var, width=35).grid(row=3, column=1, sticky="ew", padx=5)
+        
+        # Description
+        ttk.Label(main_frame, text="Description (optional):").grid(row=7, column=0, sticky="w", pady=5)
+        desc_var = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=desc_var, font=self.mono_font).grid(
+            row=7, column=1, sticky="ew", pady=5
+        )
+        
+        main_frame.columnconfigure(1, weight=1)
+        
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.grid(row=8, column=0, columnspan=2, pady=15)
+        
+        def save_rule():
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showwarning("Missing Name", "Please enter a rule name.")
+                return
+            
+            # Check for duplicate names
+            if any(r['name'] == name for r in self.custom_rules):
+                messagebox.showwarning("Duplicate", f"A rule named '{name}' already exists.")
+                return
+            
+            rule = {
+                'name': name,
+                'side': side_var.get(),
+                'rule_type': type_var.get(),
+                'description': desc_var.get(),
+                'add_to_lhs': add_lhs_var.get(),
+                'add_to_rhs': add_rhs_var.get(),
+                'branch1_lhs': b1_lhs_var.get(),
+                'branch1_rhs': b1_rhs_var.get(),
+                'branch2_lhs': b2_lhs_var.get(),
+                'branch2_rhs': b2_rhs_var.get(),
+            }
+            
+            self.custom_rules.append(rule)
+            self._save_custom_rules()
+            self._refresh_custom_rules_ui()
+            self.status_var.set(f"Custom rule '{name}' created and saved.")
+            dialog.destroy()
+        
+        ttk.Button(btn_frame, text="Save Rule", command=save_rule).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
 
 
 if __name__ == "__main__":
