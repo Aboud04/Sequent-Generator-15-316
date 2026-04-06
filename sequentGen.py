@@ -108,6 +108,46 @@ class Bottom(Formula):
 
 
 # ============================================================================
+# AUTHORIZATION LOGIC FORMULAS (Lectures 15-17)
+# ============================================================================
+
+class Says(Formula):
+    """A says P — principal A affirms proposition P."""
+    def __init__(self, principal, inner):
+        self.principal = principal  # string name of principal
+        self.inner = inner          # Formula
+
+    def __str__(self):
+        return f"({self.principal} says {self.inner})"
+
+    def to_latex(self):
+        return f"(\\mi{{{self.principal}}} \\says {self.inner.to_latex()})"
+
+    def __eq__(self, other):
+        return (isinstance(other, Says)
+                and self.principal == other.principal
+                and self.inner == other.inner)
+
+
+class Aff(Formula):
+    """A aff P — judgment that A affirms P."""
+    def __init__(self, principal, inner):
+        self.principal = principal  # string name of principal
+        self.inner = inner          # Formula
+
+    def __str__(self):
+        return f"({self.principal} aff {self.inner})"
+
+    def to_latex(self):
+        return f"(\\mi{{{self.principal}}} \\aff {self.inner.to_latex()})"
+
+    def __eq__(self, other):
+        return (isinstance(other, Aff)
+                and self.principal == other.principal
+                and self.inner == other.inner)
+
+
+# ============================================================================
 # QUANTIFIER FORMULAS
 # ============================================================================
 
@@ -510,6 +550,10 @@ class LogicParser:
         text = re.sub(r"\bskip\b", "SKIP", text, flags=re.IGNORECASE)
         text = re.sub(r"\bfor\b", "FOR", text, flags=re.IGNORECASE)
         
+        # Authorization logic keywords
+        text = re.sub(r"\bsays\b", "SAYS", text)
+        text = re.sub(r"\baff\b", "AFF", text)
+        
         return text.split()
 
     def parse(self, text):
@@ -814,6 +858,15 @@ class LogicParser:
             # Handle box modality at atom level
             self.pos -= 1  # Put back the [
             return self.parse_modality()
+        # Check if this is "principal says P" or "principal aff P"
+        if self.pos < len(self.tokens) and self.tokens[self.pos] == "SAYS":
+            self.pos += 1
+            inner = self.parse_iff()
+            return Says(token, inner)
+        elif self.pos < len(self.tokens) and self.tokens[self.pos] == "AFF":
+            self.pos += 1
+            inner = self.parse_iff()
+            return Aff(token, inner)
         return Atom(token)
 
 
@@ -886,6 +939,9 @@ class SequentProverApp:
         
         # Custom rules storage
         self.custom_rules = self._load_custom_rules()
+        
+        # Trust context for authorization logic (A ≤ B pairs)
+        self.trust_facts = []  # list of (A_name, B_name) strings
 
         self._setup_ui()
 
@@ -1191,7 +1247,124 @@ class SequentProverApp:
         struct_frame.columnconfigure(1, weight=1)
 
         # =====================================================================
-        # TAB 5: Custom Rules
+        # TAB 5: Authorization Logic Rules (Lectures 15-17)
+        # =====================================================================
+        auth_outer = ttk.Frame(rule_notebook, padding=0)
+        rule_notebook.add(auth_outer, text="🔐 Auth Logic")
+
+        # Scrollable canvas for the auth tab
+        auth_canvas = tk.Canvas(auth_outer, highlightthickness=0)
+        auth_scrollbar = ttk.Scrollbar(auth_outer, orient="vertical", command=auth_canvas.yview)
+        auth_frame = ttk.Frame(auth_canvas, padding=10)
+
+        auth_frame.bind("<Configure>", lambda e: auth_canvas.configure(scrollregion=auth_canvas.bbox("all")))
+        canvas_window = auth_canvas.create_window((0, 0), window=auth_frame, anchor="nw")
+        auth_canvas.configure(yscrollcommand=auth_scrollbar.set)
+
+        # Make the inner frame stretch to fill the canvas width
+        def _on_canvas_configure(event):
+            auth_canvas.itemconfig(canvas_window, width=event.width)
+        auth_canvas.bind("<Configure>", _on_canvas_configure)
+
+        auth_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        auth_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Enable mousewheel scrolling when hovering over the auth tab
+        def _on_auth_mousewheel(event):
+            auth_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        auth_canvas.bind_all("<MouseWheel>", _on_auth_mousewheel, add="+")
+
+        # --- Row counter for compact layout ---
+        r = 0
+
+        ttk.Label(auth_frame, text="Lectures 15-17 — Authorization Logic Rules",
+                  font=("Segoe UI", 10, "bold")).grid(
+            row=r, column=0, columnspan=3, pady=(0, 5), sticky="w")
+        r += 1
+
+        # Column headers
+        ttk.Label(auth_frame, text="Rule", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=r, column=0, pady=2)
+        ttk.Label(auth_frame, text="Left / Action", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=r, column=1, pady=2)
+        ttk.Label(auth_frame, text="Right / Action", font=("Segoe UI", 9, "bold"), foreground="#666").grid(row=r, column=2, pady=2)
+        r += 1
+
+        # ── Lecture 15: Affirmation ──
+        ttk.Separator(auth_frame, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", pady=3); r += 1
+        ttk.Label(auth_frame, text="Lecture 15 — Affirmation", font=("Segoe UI", 9, "bold"), foreground="#333").grid(
+            row=r, column=0, columnspan=3, sticky="w", padx=5); r += 1
+
+        ttk.Label(auth_frame, text="says", font=self.symbol_font).grid(row=r, column=0, padx=10, pady=1)
+        ttk.Button(auth_frame, text="saysL", command=self.rule_says_l, width=10).grid(row=r, column=1, sticky="ew", padx=5, pady=1)
+        ttk.Button(auth_frame, text="saysR", command=self.rule_says_r, width=10).grid(row=r, column=2, sticky="ew", padx=5, pady=1)
+        r += 1
+
+        ttk.Label(auth_frame, text="aff", font=self.symbol_font).grid(row=r, column=0, padx=10, pady=1)
+        ttk.Button(auth_frame, text="aff", command=self.rule_aff, width=10).grid(row=r, column=1, sticky="ew", padx=5, pady=1)
+        r += 1
+
+        # ── Lecture 15: Intuitionistic ∨ ──
+        ttk.Separator(auth_frame, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", pady=3); r += 1
+        ttk.Label(auth_frame, text="Lecture 15 — Intuitionistic ∨", font=("Segoe UI", 9, "bold"), foreground="#333").grid(
+            row=r, column=0, columnspan=3, sticky="w", padx=5); r += 1
+
+        ttk.Label(auth_frame, text="∨ choice", font=self.symbol_font).grid(row=r, column=0, padx=10, pady=1)
+        or_btn = ttk.Frame(auth_frame)
+        or_btn.grid(row=r, column=1, columnspan=2, sticky="ew", padx=5, pady=1)
+        ttk.Button(or_btn, text="∨R₁ (pick left)", command=self.rule_or_r1, width=14).pack(side=tk.LEFT, padx=2)
+        ttk.Button(or_btn, text="∨R₂ (pick right)", command=self.rule_or_r2, width=14).pack(side=tk.LEFT, padx=2)
+        r += 1
+
+        # ── Trust Preorder ──
+        ttk.Separator(auth_frame, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", pady=3); r += 1
+        ttk.Label(auth_frame, text="Trust Preorder (A ≤ B)", font=("Segoe UI", 9, "bold"), foreground="#333").grid(
+            row=r, column=0, columnspan=3, sticky="w", padx=5); r += 1
+
+        ttk.Label(auth_frame, text="≤", font=self.symbol_font).grid(row=r, column=0, padx=10, pady=1)
+        ttk.Button(auth_frame, text="≤-says", command=self.rule_trust_says, width=10).grid(row=r, column=1, sticky="ew", padx=5, pady=1)
+        ttk.Button(auth_frame, text="Set trust...", command=self.rule_trust_add, width=10).grid(row=r, column=2, sticky="ew", padx=5, pady=1)
+        r += 1
+
+        # ── Lecture 16: Cut variant ──
+        ttk.Separator(auth_frame, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", pady=3); r += 1
+        ttk.Label(auth_frame, text="Lecture 16 — Proof Search", font=("Segoe UI", 9, "bold"), foreground="#333").grid(
+            row=r, column=0, columnspan=3, sticky="w", padx=5); r += 1
+
+        ttk.Label(auth_frame, text="cut'", font=self.symbol_font).grid(row=r, column=0, padx=10, pady=1)
+        ttk.Button(auth_frame, text="cut' (split Γ)", command=self.rule_cut_prime, width=15).grid(row=r, column=1, columnspan=2, sticky="ew", padx=5, pady=1)
+        r += 1
+
+        # ── Help / Reference ──
+        ttk.Separator(auth_frame, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", pady=3); r += 1
+        ttk.Label(auth_frame, text="Quick Reference", font=("Segoe UI", 9, "bold"), foreground="#333").grid(
+            row=r, column=0, columnspan=3, sticky="w", padx=5); r += 1
+
+        help_lines = [
+            ("Syntax:", "A says P  |  A aff P"),
+            ("saysR:", "Γ ⊢ A says P  →  Γ ⊢ A aff P"),
+            ("saysL:", "Γ, A says P ⊢ A aff Q  →  Γ, P ⊢ A aff Q"),
+            ("aff:", "Γ ⊢ A aff P  →  Γ ⊢ P"),
+            ("∨R₁:", "Γ ⊢ P ∨ Q  →  Γ ⊢ P  (pick left)"),
+            ("∨R₂:", "Γ ⊢ P ∨ Q  →  Γ ⊢ Q  (pick right)"),
+            ("≤-says:", "B says P → A says P  (when A ≤ B)"),
+            ("cut':", "Γ₁,Γ₂ ⊢ δ  from  Γ₁ ⊢ P  and  Γ₂,P ⊢ δ"),
+        ]
+        for label, desc in help_lines:
+            ttk.Label(auth_frame, text=label, font=("Consolas", 8, "bold"), foreground="#444").grid(
+                row=r, column=0, sticky="e", padx=(5, 2), pady=0)
+            ttk.Label(auth_frame, text=desc, font=("Consolas", 8), foreground="#555").grid(
+                row=r, column=1, columnspan=2, sticky="w", padx=2, pady=0)
+            r += 1
+
+        ttk.Label(auth_frame, text="Example: admin says (p -> q), admin says p |- admin says q",
+                  font=("Consolas", 8, "italic"), foreground="#888").grid(
+            row=r, column=0, columnspan=3, sticky="w", padx=5, pady=(5, 0))
+        r += 1
+
+        auth_frame.columnconfigure(1, weight=1)
+        auth_frame.columnconfigure(2, weight=1)
+
+        # =====================================================================
+        # TAB 6: Custom Rules
         # =====================================================================
         custom_tab_frame = ttk.Frame(rule_notebook, padding=10)
         rule_notebook.add(custom_tab_frame, text="✨ Custom")
@@ -1638,6 +1811,10 @@ class SequentProverApp:
             return Box(formula.program, self._substitute(formula.postcondition, var, replacement))
         elif isinstance(formula, Diamond):
             return Diamond(formula.program, self._substitute(formula.postcondition, var, replacement))
+        elif isinstance(formula, Says):
+            return Says(formula.principal, self._substitute(formula.inner, var, replacement))
+        elif isinstance(formula, Aff):
+            return Aff(formula.principal, self._substitute(formula.inner, var, replacement))
         return formula
 
     # =========================================================================
@@ -2000,6 +2177,202 @@ class SequentProverApp:
             self.tree.item(self.current_tree_id, open=True)
             self.status_var.set(f"Applied cut with formula: {cut_formula}")
 
+    # =========================================================================
+    # AUTHORIZATION LOGIC RULES (Lectures 15-17)
+    # =========================================================================
+
+    def rule_says_r(self):
+        """saysR: Γ ⊢ (A says P), Δ  --->  Γ ⊢ (A aff P), Δ
+           To prove A says P, switch to proving A aff P."""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Says) or self.selected_side != "rhs":
+            messagebox.showinfo("saysR", "Select a 'says' formula in the succedent (RHS).\n\nSyntax: principal says P")
+            return
+        # Replace (A says P) with (A aff P) in the RHS
+        self.apply_unary_rule("saysR", [], [Aff(f.principal, f.inner)])
+        self.status_var.set(f"Applied saysR: now prove {f.principal} aff {f.inner}")
+
+    def rule_says_l(self):
+        """saysL: Γ, A says P ⊢ A aff Q  --->  Γ, P ⊢ A aff Q
+           Unwrap A says P when the goal is A aff Q (same principal)."""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Says) or self.selected_side != "lhs":
+            messagebox.showinfo("saysL", "Select a 'says' formula in the antecedent (LHS).\n\nSyntax: principal says P")
+            return
+        # Check that the succedent contains an 'aff' for the same principal
+        has_matching_aff = False
+        for rhs_f in seq.rhs:
+            if isinstance(rhs_f, Aff) and rhs_f.principal == f.principal:
+                has_matching_aff = True
+                break
+        if not has_matching_aff:
+            messagebox.showinfo("saysL",
+                f"saysL requires the succedent to contain '{f.principal} aff Q'\n"
+                f"for the same principal '{f.principal}'.\n\n"
+                f"Current succedent: {', '.join(str(x) for x in seq.rhs)}")
+            return
+        # Remove (A says P), add P
+        self.apply_unary_rule("saysL", [f.inner], [])
+        self.status_var.set(f"Applied saysL: unwrapped {f.principal} says into {f.inner}")
+
+    def rule_aff(self):
+        """aff: Γ ⊢ (A aff P), Δ  --->  Γ ⊢ P, Δ
+           Switch from affirmation judgment back to truth."""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Aff) or self.selected_side != "rhs":
+            messagebox.showinfo("aff", "Select an 'aff' formula in the succedent (RHS).\n\nSyntax: principal aff P")
+            return
+        # Replace (A aff P) with P in the RHS
+        self.apply_unary_rule("aff", [], [f.inner])
+        self.status_var.set(f"Applied aff: now prove {f.inner} (from {f.principal}'s perspective)")
+
+    def rule_or_r1(self):
+        """∨R₁ (intuitionistic): Γ ⊢ P ∨ Q  --->  Γ ⊢ P
+           Choose the LEFT disjunct only."""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Or) or self.selected_side != "rhs":
+            messagebox.showinfo("∨R₁", "Select a disjunction (P ∨ Q) in the succedent (RHS).")
+            return
+        self.apply_unary_rule("∨R₁", [], [f.left])
+        self.status_var.set(f"Applied ∨R₁: chose left disjunct {f.left}")
+
+    def rule_or_r2(self):
+        """∨R₂ (intuitionistic): Γ ⊢ P ∨ Q  --->  Γ ⊢ Q
+           Choose the RIGHT disjunct only."""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Or) or self.selected_side != "rhs":
+            messagebox.showinfo("∨R₂", "Select a disjunction (P ∨ Q) in the succedent (RHS).")
+            return
+        self.apply_unary_rule("∨R₂", [], [f.right])
+        self.status_var.set(f"Applied ∨R₂: chose right disjunct {f.right}")
+
+    def rule_trust_add(self):
+        """Declare a trust relationship A ≤ B."""
+        from tkinter import simpledialog
+        input_str = simpledialog.askstring(
+            "Set Trust Relationship",
+            "Enter trust fact (format: A <= B):\n\n"
+            "Example: admin <= fp\n"
+            "Meaning: admin trusts fp",
+            parent=self.root)
+        if input_str is None:
+            return
+        input_str = input_str.strip()
+        if "<=" not in input_str:
+            messagebox.showinfo("Trust", "Format: A <= B\nExample: admin <= fp")
+            return
+        parts = input_str.split("<=")
+        a = parts[0].strip()
+        b = parts[1].strip()
+        if not a or not b:
+            messagebox.showinfo("Trust", "Both principal names are required.")
+            return
+        self.trust_facts.append((a, b))
+        self.status_var.set(f"Trust added: {a} ≤ {b}  (total: {len(self.trust_facts)} facts)")
+
+    def _trust_holds(self, a, b):
+        """Check if a ≤ b via reflexivity + transitivity."""
+        if a == b:
+            return True
+        visited = set()
+        stack = [a]
+        while stack:
+            cur = stack.pop()
+            if cur == b:
+                return True
+            if cur in visited:
+                continue
+            visited.add(cur)
+            for (x, y) in self.trust_facts:
+                if x == cur:
+                    stack.append(y)
+        return False
+
+    def rule_trust_says(self):
+        """≤-says: If A ≤ B and (B says P) is in the LHS, rewrite it to (A says P).
+           Select the (B says P) formula on the LHS."""
+        node, seq, f = self.get_target()
+        if not node or not isinstance(f, Says) or self.selected_side != "lhs":
+            messagebox.showinfo("≤-says", "Select a 'says' formula in the antecedent.\n\nThis rule rewrites (B says P) → (A says P) when A ≤ B.")
+            return
+        if not self.trust_facts:
+            messagebox.showinfo("≤-says", "No trust relationships set.\n\nUse 'Set trust...' to declare A ≤ B first.")
+            return
+        # Find all principals A such that A ≤ f.principal (A trusts B)
+        from tkinter import simpledialog
+        eligible = []
+        for (a, b) in self.trust_facts:
+            if self._trust_holds(a, f.principal) and a != f.principal:
+                eligible.append(a)
+        # Remove duplicates
+        eligible = list(set(eligible))
+        if not eligible:
+            messagebox.showinfo("≤-says",
+                f"No principal A found with A ≤ {f.principal}.\n\n"
+                f"Current trust facts: {', '.join(a + ' ≤ ' + b for a, b in self.trust_facts)}")
+            return
+        if len(eligible) == 1:
+            target_principal = eligible[0]
+        else:
+            target_principal = simpledialog.askstring(
+                "≤-says",
+                f"Multiple principals trust {f.principal}:\n"
+                f"  {', '.join(eligible)}\n\n"
+                f"Which principal A to use for A says {f.inner}?",
+                parent=self.root)
+            if target_principal is None or target_principal.strip() not in eligible:
+                return
+            target_principal = target_principal.strip()
+        # Replace (B says P) with (A says P)
+        new_formula = Says(target_principal, f.inner)
+        self.apply_unary_rule("≤-says", [new_formula], [])
+        self.status_var.set(f"Applied ≤-says: {f.principal} says → {target_principal} says (via {target_principal} ≤ {f.principal})")
+
+    def rule_cut_prime(self):
+        """cut' (Lecture 16): Γ₁,Γ₂ ⊢ δ  from  Γ₁ ⊢ P  and  Γ₂,P ⊢ δ
+           Split-context variant of cut. User picks which LHS formulas go to Γ₁."""
+        if not self.current_proof_node:
+            return
+        node = self.current_proof_node
+        if node.children or node.is_closed:
+            messagebox.showwarning("Error", "Can only apply to leaf node.")
+            return
+        from tkinter import simpledialog
+        formula_str = simpledialog.askstring("cut'", "Cut formula P:", parent=self.root)
+        if formula_str is None:
+            return
+        cut_formula = self.parser.parse(formula_str)
+        if not cut_formula:
+            return
+        # Ask which LHS indices go to Γ₁ (the rest go to Γ₂)
+        lhs_strs = [f"{i}: {f}" for i, f in enumerate(node.sequent.lhs)]
+        indices_str = simpledialog.askstring(
+            "cut' — split context",
+            f"Current LHS:\n" + "\n".join(lhs_strs) + "\n\n"
+            f"Enter indices for Γ₁ (comma-separated).\n"
+            f"The rest go to Γ₂.\n\n"
+            f"Example: 0,2",
+            parent=self.root)
+        if indices_str is None:
+            return
+        try:
+            gamma1_indices = set(int(x.strip()) for x in indices_str.split(",") if x.strip())
+        except ValueError:
+            messagebox.showinfo("cut'", "Enter comma-separated integers.")
+            return
+        gamma1 = [f for i, f in enumerate(node.sequent.lhs) if i in gamma1_indices]
+        gamma2 = [f for i, f in enumerate(node.sequent.lhs) if i not in gamma1_indices]
+        # Branch 1: Γ₁ ⊢ P
+        b1_seq = Sequent(gamma1, [cut_formula])
+        node.add_child(b1_seq)
+        # Branch 2: Γ₂, P ⊢ δ
+        b2_seq = Sequent(gamma2 + [cut_formula], node.sequent.rhs[:])
+        node.add_child(b2_seq)
+        node.rule_applied = "cut'"
+        self.update_tree_display(node, self.current_tree_id)
+        self.tree.item(self.current_tree_id, open=True)
+        self.status_var.set(f"Applied cut' with P = {cut_formula}")
+
     # --- Updated Export ---
 
     def export_latex(self):
@@ -2015,7 +2388,13 @@ class SequentProverApp:
                 .replace("∨", "\\lor ")
                 .replace("→", "\\to ")
                 .replace("¬", "\\lnot ")
+                .replace("saysR", "{\\mathbf{says}}R")
+                .replace("saysL", "{\\mathbf{says}}L")
+                .replace("≤-says", "\\leq\\mbox{-}\\mathbf{says}")
+                .replace("cut'", "\\ms{cut}'")
             )
+            if rule_tex == "aff":
+                rule_tex = "\\mathbf{aff}"
 
             sequent_tex = node.sequent.to_latex()
 

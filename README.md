@@ -1,214 +1,156 @@
-# Sequent Calculus Proof Assistant
+# Sequent Calculus Proof Assistant — with Authorization Logic
 
-A Python/Tkinter GUI application for constructing formal proofs using **sequent calculus**. Designed for CMU 15-316 Software Security course, supporting propositional logic, first-order logic, and dynamic logic.
+A Python/Tkinter GUI application for constructing formal proofs using **sequent calculus**, extended with **authorization logic** from CMU 15-316 Lectures 15–17. Also includes an automated proof search engine (`sequent_generator.py`).
 
-![Python](https://img.shields.io/badge/Python-3.x-blue)
+![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![Tkinter](https://img.shields.io/badge/GUI-Tkinter-green)
-![Tests](https://img.shields.io/badge/tests-41%20passing-brightgreen)
 
-> 📖 **New User?** Check out the comprehensive **[How To Guide](How_To_Guide.md)** for step-by-step instructions!
-
-## Features
-
-### Logic Systems Supported
-- **Propositional Logic**: ∧, ∨, →, ¬, ↔, ⊤, ⊥
-- **First-Order Logic**: ∀ (forall), ∃ (exists) with term substitution
-- **Dynamic Logic**: Box modality [α]P for program verification
-  - Assignment `[x := e]P`
-  - Test `[?P]Q`
-  - Skip `[skip]P`
-  - Sequential composition `[α; β]P`
-  - Non-deterministic choice `[α ∪ β]P`
-  - Iteration `[α*]P`
-  - Conditionals `[if P then α else β]Q`
-  - While loops `[while P do α]Q` with invariant support
-  - Bounded for loops `[for 0 ≤ i < n do α]Q`
-
-### User Interface
-- **Tabbed Rule Organization**: 5 tabs organizing 30+ inference rules
-- **Interactive Proof Tree**: Visual representation of proof structure
-- **LaTeX Export**: Export proofs for academic papers
-- **Custom Rules**: Define and save your own inference rules
-
-## Installation
+## Installation & Running
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/Sequent-Generator-15-316.git
+git clone https://github.com/Aboud04/Sequent-Generator-15-316.git
 cd Sequent-Generator-15-316
-
-# Create virtual environment (optional but recommended)
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-source .venv/bin/activate  # macOS/Linux
-
-# Run the application
 python sequentGen.py
 ```
 
-**Requirements**: Python 3.x with Tkinter (included in standard library)
+**Requirements**: Python 3.12+ with Tkinter (included in standard Python).
 
-## Usage
+## Complete Rule Reference
 
-### Basic Workflow
-1. **Enter a sequent** in the input field using the syntax below
-2. **Click "▶ Start Proof"** to begin
-3. **Select a formula** from the LHS or RHS listbox
-4. **Apply a rule** from the appropriate tab
-5. **Repeat** until all branches are closed (marked with ✔)
+The GUI has **6 tabs** of rules. Here is every rule across all tabs:
 
-### Input Syntax
+### Tab 1: 📐 Propositional Rules
 
+| Rule | Side | Behavior | Lecture |
+|------|------|----------|---------|
+| ∧L | LHS | Split conjunction: Γ, P ∧ Q ⊢ Δ → Γ, P, Q ⊢ Δ | 15 |
+| ∧R | RHS | Branch: Γ ⊢ P ∧ Q → Γ ⊢ P and Γ ⊢ Q | 15 |
+| ∨L | LHS | Branch: Γ, P ∨ Q ⊢ Δ → Γ, P ⊢ Δ and Γ, Q ⊢ Δ | 15 |
+| ∨R | RHS | Classical split (keeps both disjuncts in succedent) | — |
+| →L | LHS | Branch: Γ, P→Q ⊢ Δ → Γ ⊢ P and Γ, Q ⊢ Δ | 15 |
+| →R | RHS | Move antecedent: Γ ⊢ P→Q → Γ, P ⊢ Q | 15 |
+| ¬L/¬R | Both | Negation decomposition | — |
+| ↔L/↔R | Both | Bi-implication decomposition | — |
+| ⊥L | LHS | Close branch (ex falso) | — |
+| ⊤R | RHS | Close branch (trivially true) | — |
+
+### Tab 2: ∀∃ Quantifier Rules
+
+| Rule | Behavior | Lecture |
+|------|----------|---------|
+| ∀R | Introduce fresh variable y: Γ ⊢ ∀x.P(x) → Γ ⊢ P(y) | 15 |
+| ∀L | Instantiate with term: Γ, ∀x.P(x) ⊢ Δ → Γ, P(c) ⊢ Δ | 15 |
+| ∃R | Instantiate with term | — |
+| ∃L | Introduce fresh variable | — |
+
+### Tab 3: [α] Dynamic Logic Rules
+
+Assignment, test, sequence, choice, loop, conditional, while, for rules.
+
+### Tab 4: ⚙ Structural Rules
+
+| Rule | Behavior | Lecture |
+|------|----------|---------|
+| WL/WR | Weakening — add unused formula | — |
+| CL/CR | Contraction — remove duplicate | — |
+| Cut | Lemma introduction: Γ ⊢ Δ from Γ ⊢ P and Γ, P ⊢ Δ | 16 |
+| Identity | Close branch when same formula on both sides | 15 |
+
+### Tab 5: 🔐 Auth Logic (Lectures 15-17)
+
+**This is the new tab.** All rules from the authorization logic lectures:
+
+| Rule | Behavior | Lecture |
+|------|----------|---------|
+| **saysR** | Γ ⊢ A says P → Γ ⊢ A aff P | 15 |
+| **saysL** | Γ, A says P ⊢ A aff Q → Γ, P ⊢ A aff Q (same principal) | 15 |
+| **aff** | Γ ⊢ A aff P → Γ ⊢ P (drop affirmation) | 15 |
+| **∨R₁** | Γ ⊢ P ∨ Q → Γ ⊢ P (intuitionistic: pick left disjunct only) | 15 |
+| **∨R₂** | Γ ⊢ P ∨ Q → Γ ⊢ Q (intuitionistic: pick right disjunct only) | 15 |
+| **≤-says** | Rewrite B says P → A says P on LHS when trust A ≤ B holds | — |
+| **Set trust** | Declare a trust relationship A ≤ B | — |
+| **cut'** | Split-context cut: Γ₁,Γ₂ ⊢ δ from Γ₁ ⊢ P and Γ₂,P ⊢ δ | 16 |
+
+**Note on Lecture 16 focusing rules:** The focusR, focusL, blurR, blurL rules from Lecture 16 are **proof search strategy rules** that control which formula to decompose next. They are not user-applied inference rules — they govern the order of rule application in automated search. The automated prover in `sequent_generator.py` implements them internally.
+
+**Note on Lecture 17:** Lecture 17 defines **proof term annotations** on all existing rules (λx.M for →R, ⟨M,N⟩ for ∧R, {M}_A for saysR, etc.) — it does not introduce new inference rules. The automated prover generates these proof terms.
+
+### Tab 6: ✨ Custom Rules
+
+User-defined rules saved to `custom_rules.json`.
+
+## Input Syntax
+
+### Propositional & Quantifier Logic
 ```
-# Propositional Logic
 p implies q, p |- q
 p and q |- p
 not (A or B) |- not A and not B
-A iff B |- A implies B
-
-# First-Order Logic
-forall x. P |- exists y. P
-∀x. Human(x) -> Mortal(x), Human(socrates) |- Mortal(socrates)
-
-# Dynamic Logic
-[x := 5]x = 5 |- true
-[?x > 0]y = x |- x > 0 implies y = x
-[a; b]P |- [a][b]P
-[skip]P |- P
-[skip; a]Q |- [a]Q
-[for 0 <= i < n do x := i]P |- Q
+forall x. P |- P
 ```
 
-### Keyboard Shortcuts
-- **Enter**: Start proof (when in input field)
-
-## Rule Reference
-
-### Tab 1: 📐 Propositional Rules
-| Rule | LHS/RHS | Behavior |
-|------|---------|----------|
-| ∧L | LHS | Split conjunction |
-| ∧R | RHS | Branch (prove both) |
-| ∨L | LHS | Branch (prove both) |
-| ∨R | RHS | Split disjunction |
-| →L | LHS | Branch (antecedent/consequent) |
-| →R | RHS | Move antecedent to LHS |
-| ¬L | LHS | Move negated formula to RHS |
-| ¬R | RHS | Move inner formula to LHS |
-| ↔L/R | Both | Bi-implication decomposition |
-| ⊥L | LHS | Close if ⊥ present |
-| ⊤R | RHS | Close if ⊤ present |
-
-### Tab 2: ∀∃ Quantifier Rules
-| Rule | Description |
-|------|-------------|
-| ∀R | Introduce fresh variable |
-| ∀L | Instantiate with term (prompted) |
-| ∃R | Instantiate with term (prompted) |
-| ∃L | Introduce fresh variable |
-
-### Tab 3: [α] Dynamic Logic Rules
-| Rule | Program Type | Result |
-|------|--------------|--------|
-| [:=]R | Assignment | Add equality, substitute |
-| [?]L/R | Test | Move guard to LHS / branch |
-| [skip]L/R | Skip | Remove skip, keep postcondition |
-| [;]L/R | Sequence | Nest modalities |
-| [∪]R | Choice | Branch for each option |
-| [*]unfold | Loop | Branch: exit or iterate |
-| [if]R | Conditional | Branch on guard |
-| [while]unfold | While | Branch on guard |
-| [while]inv | While with invariant | 3 branches (init, preserve, exit) |
-| [for]R | Bounded for loop | Desugar to while loop |
-
-### Tab 4: ⚙ Structural Rules
-| Rule | Description |
-|------|-------------|
-| WL/WR | Weakening - add formula |
-| CL/CR | Contraction - remove duplicate |
-| Cut | Introduce lemma |
-
-### Tab 5: ✨ Custom Rules
-
-Create your own rules for domain-specific reasoning:
-
-1. Click **"+ Add Rule"**
-2. Configure the rule:
-   - **Name**: Unique identifier
-   - **Side**: LHS or RHS
-   - **Type**: Unary (1 branch), Binary (2 branches), or Close
-3. Use **placeholders** in formulas:
-   - `LEFT` - left operand of binary formula
-   - `RIGHT` - right operand of binary formula
-   - `INNER` - inner formula of negation
-   - `FORMULA` - the entire selected formula
-4. Rules are **saved automatically** to `custom_rules.json`
-
-## Running Tests
-
-```bash
-python -m unittest test -v
+### Authorization Logic (NEW)
+```
+admin says p |- admin says p
+admin says (p -> q), admin says p |- admin says q
+admin aff p |- p
+fp says studentOf(hemant, fp) |- fp says studentOf(hemant, fp)
 ```
 
-All 41 tests cover:
-- Propositional rules (∧, ∨, →, ¬, ↔, ⊤, ⊥)
-- Quantifier rules (∀, ∃)
-- Dynamic logic rules ([:=], [?], [;], [∪], [*], [skip], [if], [while], [for])
-- While loop with invariant ([while]inv - 3 branch proof)
-- Structural rules (W, C, Cut)
-- Parser for all formula types
-- Complete proof verification (e.g., `⊢ [skip;α]Q ↔ [α]Q`)
+The `says` and `aff` keywords bind to the identifier immediately before them:
+- `admin says P` parses as `(admin says P)` — admin is the principal
+- `admin says (P -> Q)` — use parentheses for complex inner formulas
+- `admin aff P` parses as `(admin aff P)`
 
-## LaTeX Export
+### Trust Relationships
 
-Click **"⬇ Export LaTeX"** to generate proof tree code:
+Trust is declared at runtime via the **Set trust...** button (not in the sequent syntax). Click it and enter `admin <= fp` to declare that admin trusts fp. Then use **≤-says** to apply the trust relationship.
 
-```latex
-\begin{rules}
-\infer[\ms{→R}]
-  {p \to q \vdash p \to q}
-  {
-    \infer[\ms{id}]
-      {p, p \to q \vdash q}
-      {}
-  }
-\end{rules}
-```
+## Walkthrough: Proving admin says Q from admin says (P→Q) and admin says P
+
+1. Enter: `admin says (p -> q), admin says p |- admin says q`
+2. Click **▶ Start Proof**
+3. Select `(admin says q)` on RHS → click **saysR** → goal becomes `admin aff q`
+4. Select `(admin says (p -> q))` on LHS → click **saysL** → unwraps to `(p -> q)`
+5. Select `(admin says p)` on LHS → click **saysL** → unwraps to `p`
+6. Select `(admin aff q)` on RHS → click **aff** → goal becomes `q`
+7. Select `(p -> q)` on LHS → click **→L** → branches into `⊢ p` and `q ⊢ q`
+8. Close both branches with **Identity**
 
 ## Project Structure
 
 ```
 Sequent-Generator-15-316/
-├── sequentGen.py       # Main application (2200+ lines)
-├── test.py             # Unit tests (41 tests)
-├── How_To_Guide.md     # 📖 Comprehensive user guide with examples
-├── custom_rules.json   # User-defined rules (auto-generated)
-├── README.md           # This file
-├── Notes To Reference/ # PDF lecture notes for rule reference
-│   ├── 02-prop.pdf        # Propositional logic rules
-│   ├── 03-dynamiclogic.pdf # Dynamic logic (box modality, programs)
-│   ├── 04-semantics.pdf    # Semantics reference
-│   ├── 05-safety.pdf       # Safety proofs
-│   └── 06-memsafety.pdf    # Memory safety
-└── .github/
-    └── copilot-instructions.md  # Developer documentation
+├── sequentGen.py              # GUI application (Tkinter) — all rules
+├── sequent_generator.py       # Automated prover — auth logic proof search
+├── test.py                    # Original unit tests (41 tests)
+├── tests/
+│   ├── test_rules.py          # Auth logic pytest tests (45 tests)
+│   ├── generate_latex_tests.py
+│   └── latex/
+│       └── test_all_rules.tex # 23-section LaTeX verification document
+├── README.md
+└── How_To_Guide.tex
 ```
 
-> **📚 Developer Note**: Always check the `Notes To Reference/` folder for PDF lecture notes containing formal rule definitions and examples. These PDFs are the authoritative source for sequent calculus rules in 15-316.
+## Running Tests
 
-## Contributing
+```bash
+# Original GUI tests
+python -m unittest test -v
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
+# Authorization logic tests
+python -m pytest tests/test_rules.py -v
+
+# LaTeX compilation
+cd tests/latex && pdflatex test_all_rules.tex
+```
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License
 
 ## Acknowledgments
 
-- CMU 15-316 Software Security course materials
-- Sequent calculus formalization from lecture notes
+- CMU 15-316 Software Foundations of Security & Privacy
+- Frank Pfenning's lecture notes (Lectures 15–17)
