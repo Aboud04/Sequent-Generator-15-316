@@ -887,7 +887,8 @@ class Sequent:
         
         l = ", ".join(f.to_latex() for f in lhs_filtered)
         r = ", ".join(f.to_latex() for f in rhs_filtered)
-        return f"{l if l else '\\cdot'} \\vdash {r if r else '\\cdot'}"
+        cdot = "\\cdot"
+        return f"{l if l else cdot} \\vdash {r if r else cdot}"
 
 
 class ProofNode:
