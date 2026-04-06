@@ -32,3 +32,16 @@ custom_rules.json
 # OS files
 .DS_Store
 Thumbs.db
+tests/generate_latex_tests.py
+tests/lecture_verification_report.txt
+tests/test_rules.py
+tests/latex/lecnotes.sty
+tests/latex/lmacros.tex
+tests/latex/proof-dashed.sty
+tests/latex/stmaryrd.sty
+tests/latex/test_all_rules.aux
+tests/latex/test_all_rules.log
+tests/latex/test_all_rules.out
+tests/latex/test_all_rules.pdf
+tests/latex/test_all_rules.tex
+tests/latex/test_all_rules.toc
